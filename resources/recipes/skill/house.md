@@ -47,7 +47,6 @@ the front door — with chat narration at every phase.
 const BASE = new Vec3(100, -61, 100) // ← the BASE printed by Step 1 (y = ground layer)
 const W = 7, D = 6
 const y0 = BASE.y + 1 // first air layer: wall bottom
-bot.pathfinder.setMovements(new Movements(bot))
 try { bot.creative.stopFlying() } catch (e) { /* not flying */ }
 
 // --- materials: one hotbar slot per material, equip once per run ---
@@ -101,12 +100,44 @@ async function hold(mat) {
   await sleep(100)
 }
 
-// --- movement: WALK, never fly; bounded; cancel leftover goals ---
+// --- movement: human striding (see mcp-craft://skill/humanlike). Face the
+// target, sprint, hop ledges (auto-jump is built into the runtime); if pinned
+// for 1.5s — jump; still pinned — punch through. Bounded, never hangs.
 async function walkTo(dx, dy, dz) {
   try { bot.creative.stopFlying() } catch (e) { /* fine */ }
-  const goal = new goals.GoalBlock(BASE.x + dx, y0 + dy, BASE.z + dz)
-  await Promise.race([bot.pathfinder.goto(goal).catch(() => {}), sleep(8000)])
-  bot.pathfinder.setGoal(null)
+  const target = new Vec3(BASE.x + dx, y0 + dy, BASE.z + dz)
+  const deadline = Date.now() + 10000
+  let lastPos = bot.entity.position.clone()
+  let lastMove = Date.now()
+  bot.setControlState('sprint', true)
+  bot.setControlState('forward', true)
+  try {
+    while (Date.now() < deadline) {
+      if (bot.entity.position.distanceTo(target.offset(0.5, 0, 0.5)) < 1.6) return
+      await bot.lookAt(target.offset(0.5, 1.62, 0.5), true)
+      await sleep(100)
+      if (bot.entity.position.distanceTo(lastPos) > 0.15) {
+        lastPos = bot.entity.position.clone()
+        lastMove = Date.now()
+      } else if (Date.now() - lastMove > 1500) {
+        bot.setControlState('jump', true)
+        await sleep(300)
+        bot.setControlState('jump', false)
+        if (Date.now() - lastMove > 3000) {
+          const d = target.offset(0.5, 0, 0.5).minus(bot.entity.position)
+          const step = new Vec3(Math.sign(Math.round(d.x)), 0, Math.sign(Math.round(d.z)))
+          for (const dyFace of [1, 0]) {
+            const b = bot.blockAt(bot.entity.position.floored().offset(step.x, dyFace, step.z))
+            if (b && b.boundingBox === 'block') await Promise.race([bot.dig(b).catch(() => {}), sleep(3000)])
+          }
+          lastMove = Date.now()
+        }
+      }
+    }
+  } finally {
+    bot.setControlState('forward', false)
+    bot.setControlState('sprint', false)
+  }
 }
 
 // --- placement: occupied-cell refusal, per-place watchdog, blockAt truth ---
@@ -123,6 +154,14 @@ async function put(dx, dy, dz, mat) {
   if (target.equals(feet) || target.equals(feet.offset(0, 1, 0))) return 'standing there'
   const existing = bot.blockAt(target)
   if (existing && existing.boundingBox === 'block') return 'occupied'
+  // A step beats a repath: barely out of reach → sidle toward it like a human.
+  for (let s = 0; s < 2 && !inReach(target); s++) {
+    const d = target.offset(0.5, 0, 0.5).minus(bot.entity.position)
+    await bot.lookAt(bot.entity.position.offset(Math.sign(d.x), 1.62, Math.sign(d.z)), true)
+    bot.setControlState('forward', true)
+    await sleep(300)
+    bot.setControlState('forward', false)
+  }
   if (!inReach(target)) return 'out of reach'
   await hold(mat)
   for (const face of FACES) {
@@ -185,11 +224,13 @@ let remaining = roof
 for (const [ax, ay, az] of ANCHORS) {
   if (remaining.length === 0) break
   await walkTo(ax, ay, az)
+  if (ay > 0) bot.setControlState('sneak', true) // edge work: sneaking means you cannot fall off
   const next = []
   for (const c of remaining) {
     const r = await put(c.x, c.dy, c.z, 'oak_planks')
     if (r !== 'placed' && r !== 'occupied') next.push(c)
   }
+  if (ay > 0) bot.setControlState('sneak', false)
   remaining = next
 }
 if (remaining.length > 0) bot.chat(`Roof: ${remaining.length} blocks I could not reach — will report them in the verify sweep.`)

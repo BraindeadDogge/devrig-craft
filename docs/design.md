@@ -165,6 +165,13 @@ reason; it cannot act on an unexplained queue delay).
 - Output is the only feedback channel: verification recipes teach
   `bot.blockAt(...)` sweeps ("assert the wall exists") — verify via
   API, not pixels; screenshots are for the human/final reveal.
+- **Human placement contract (2026-08-28):** the runtime wraps
+  `bot.placeBlock`/`bot.dig` on the injected bot: the head turns
+  smoothly to face the target before the action, and targets beyond
+  arm's reach (4.5) are refused with an actionable error. A raw
+  mineflayer bot can spawn blocks behind its back across half the map;
+  a demo bot may not — this is a product-authenticity constraint, not
+  a convenience wrapper, and no script can bypass it.
 
 ## 7. Recipe corpus (`mcp-craft://`)
 
