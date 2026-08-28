@@ -1,0 +1,33 @@
+{
+  "name": "devrig-craft",
+  "version": "0.1.0",
+  "description": "devrig plays Minecraft — MCP Steroid philosophy, Minecraft host",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": { "devrig-craft": "dist/cli.js" },
+  "files": ["dist", "resources"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "npm run typecheck && vitest run test",
+    "test:pack": "npm run build && npm pack --pack-destination build && tar -tf build/devrig-craft-0.1.0.tgz | grep -q package/resources/recipes/prompt/skill.md && npx --yes ./build/devrig-craft-0.1.0.tgz --version",
+    "test:integration": "vitest run test-integration --testTimeout 600000"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "mineflayer": "^4.20.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "minecraft-protocol": "^1.47.0",
+    "minecraft-data": "^3.0.0",
+    "prismarine-item": "^1.15.0",
+    "vec3": "^0.1.10",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
