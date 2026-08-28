@@ -54,5 +54,29 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
         })
       }),
   })
+  // Human placement contract, enforced at the TOOL level so no script can
+  // bypass it: a real player must face a block to click it and cannot reach
+  // past ~4.5. Every placeBlock/dig first TURNS the head smoothly toward the
+  // target (visible, human), and refuses targets out of arm's reach with an
+  // actionable error instead of silently spawning blocks behind the back.
+  const REACH = 4.5
+  const eye = () => bot.entity.position.offset(0, 1.62, 0)
+  const origPlaceBlock = bot.placeBlock.bind(bot)
+  bot.placeBlock = async (ref, face) => {
+    const target = ref.position.plus(face).offset(0.5, 0.5, 0.5)
+    if (eye().distanceTo(target) > REACH)
+      throw new Error(`placeBlock: target ${target.floored()} is out of arm's reach (${REACH}) — walk closer first`)
+    await bot.lookAt(target, false) // smooth turn: the human sees the head move
+    return origPlaceBlock(ref, face)
+  }
+  const origDig = bot.dig.bind(bot)
+  bot.dig = (async (block: Parameters<typeof origDig>[0], ...rest: unknown[]) => {
+    const target = block.position.offset(0.5, 0.5, 0.5)
+    if (eye().distanceTo(target) > REACH)
+      throw new Error(`dig: block ${block.position} is out of arm's reach (${REACH}) — walk closer first`)
+    await bot.lookAt(target, false)
+    return (origDig as (...args: unknown[]) => Promise<void>)(block, ...rest)
+  }) as typeof bot.dig
+
   return bot as unknown as BotLike
 }

@@ -20,6 +20,7 @@ right few lines of mineflayer, and that is what the articles below teach.
 | `mcp-craft://skill/building` | Placement fundamentals: the place loop, reach, occupied cells, verification. Read when the house recipe does not fit the request. |
 | `mcp-craft://skill/building-with-commands` | `/fill`, `/setblock` and `/give` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
 | `mcp-craft://skill/world-queries` | `blockAt`, `findBlocks`, entity queries, and **the verification pattern** — how to prove what you built is actually there. |
+| `mcp-craft://skill/humanlike` | The movement & placement doctrine: striding with self-unstick, step-beats-repath, nerd-poling, sneak-bridging. |
 | `mcp-craft://skill/navigation` | Pathfinder: goto, following the human, dynamic goals, stuck recovery with a watchdog. |
 | `mcp-craft://skill/inventory` | Creative hotbar self-service, counting, survival crafting, equipping the right item before placing. |
 | `mcp-craft://skill/survival` | Health/food monitoring, eating, night and hostile-mob awareness — keeping an unattended demo alive. |
@@ -79,7 +80,12 @@ body of an async function, so top-level `await` is expected.
 8. **Movement that hangs:** never `bot.creative.flyTo`, never a `goto` while
    flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
    and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.
-9. **Check you can move before you plan.** A rejoining bot spawns where it
+9. **The runtime enforces human placement.** `bot.placeBlock` and `bot.dig`
+   physically turn the bot's head toward the target (smoothly — the human
+   sees it) and REFUSE anything beyond arm's reach (4.5) with an error. You
+   cannot spawn blocks behind your back; walk within reach first — the
+   movement doctrine is `mcp-craft://skill/humanlike`.
+10. **Check you can move before you plan.** A rejoining bot spawns where it
    disconnected — possibly boxed inside leftovers, or left HOVERING mid-air
    by server-side flight state (a walk test passes while flying, so check
    altitude first: solid ground more than 1 block below feet → `/tp` down).

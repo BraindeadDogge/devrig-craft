@@ -55,6 +55,7 @@ describe('recipe corpus', () => {
         'skill/building.md',
         'skill/design-philosophy.md',
         'skill/house.md',
+        'skill/humanlike.md',
         'skill/inventory.md',
         'skill/navigation.md',
         'skill/survival.md',
@@ -127,6 +128,7 @@ describe('recipe corpus', () => {
     const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
     for (const name of [
       'house',
+      'humanlike',
       'building',
       'building-with-commands',
       'world-queries',
