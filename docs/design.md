@@ -118,6 +118,14 @@ Tool descriptions copy the steroid house style: `task_id` + `reason`
 audit params on heavy tools (logged with the execution), "prefer
 execute_code" steering on `craft_chat` and `craft_take_screenshot`.
 
+**Chat narration (added 2026-08-28):** the human watches the bot live,
+so the running commentary is part of the product. `craft_execute_code`
+speaks its `reason` into the game chat (`[devrig] …`, truncated to
+chat's 256-char cap) when a script starts, and narrates timeouts and
+script failures; the recipe index rule 6 teaches agents to `bot.chat()`
+their plan, milestones and verification verdicts inside long scripts.
+Narration failures never break the execution.
+
 JSON responses use snake_case keys (`world_name`, `display_name`, …) —
 the same convention as the tool parameters; camelCase stays internal to
 the TypeScript code and is converted once at the MCP boundary.

@@ -22,6 +22,19 @@ const ok = (text: string) => ({ content: [{ type: 'text' as const, text }] })
 const err = (text: string) => ({ content: [{ type: 'text' as const, text }], isError: true })
 const json = (value: unknown) => ok(JSON.stringify(toWire(value), null, 2))
 
+// Narrate into the game chat — the human is watching the bot live, and the
+// running commentary IS the demo. Minecraft chat caps at 256 chars; never
+// let a narration failure break the actual work.
+function say(bot: BotLike, text: string): void {
+  const chat = (bot as BotLike & { chat?: (t: string) => void }).chat
+  if (!chat) return
+  try {
+    chat.call(bot, text.replace(/\s+/g, ' ').slice(0, 250))
+  } catch (e) {
+    console.error('chat narration failed:', e)
+  }
+}
+
 export function createCraftServer(deps: CraftServerDeps): { server: McpServer; endAll: () => void } {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })
   const bots = new BotManager(deps.botFactory)
@@ -95,7 +108,13 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
         world_name: z.string().max(256),
         code: z.string().max(100_000).describe('body of an async function; top-level await works'),
         task_id: z.string().max(256).describe('reuse across related calls to group audit logs'),
-        reason: z.string().max(4096).describe('full task description of intent and expected outcome'),
+        reason: z
+          .string()
+          .max(4096)
+          .describe(
+            'what you are doing and why, in one human-readable sentence — it is SPOKEN INTO THE ' +
+              'GAME CHAT as narration for the human watching, then logged',
+          ),
         timeout: z.number().int().min(1).max(600).optional().describe('seconds, default 120'),
       },
     },
@@ -110,6 +129,7 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
 
       const executionId = randomUUID()
       issuedExecutions.add(executionId)
+      say(entry.bot, `[devrig] ${reason}`)
       const started = Date.now()
       const audit = (okFlag: boolean) =>
         console.error(
@@ -130,6 +150,7 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
       } catch (e) {
         audit(false)
         if (e instanceof ScriptError && e.timedOut) {
+          say(entry.bot, '[devrig] that script timed out — reconnecting and rethinking')
           try {
             entry.bot.end('devrig-craft: script timeout')
           } catch (endErr) {
@@ -139,10 +160,12 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
             `execution_id: ${executionId}\n${e.message}\nBot disconnected to stop the runaway script — craft_join_world to rejoin.`,
           )
         }
-        if (e instanceof ScriptError)
+        if (e instanceof ScriptError) {
+          say(entry.bot, `[devrig] hit a snag: ${e.message}`)
           return err(
             `execution_id: ${executionId}\n${[e.message, e.failingLine, e.scriptStack].filter(Boolean).join('\n')}`,
           )
+        }
         throw e
       } finally {
         release()

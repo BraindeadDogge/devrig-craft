@@ -14,9 +14,11 @@ class FakeBot extends EventEmitter implements BotLike {
   health = 20
   food = 20
   lastChat = ''
+  chats: string[] = []
   ended = false
   chat(text: string) {
     this.lastChat = text
+    this.chats.push(text)
   }
   blockAt() {
     return { name: 'stone' }
@@ -210,6 +212,26 @@ describe('craft MCP server', () => {
       arguments: { world_name: 'test-world', text: 'hello', task_id: 't', reason: 'r' },
     })
     expect(bot.lastChat).toBe('hello')
+  })
+
+  it('narrates the reason into the game chat when a script starts', async () => {
+    await joinAndSpawn()
+    await client.callTool({
+      name: 'craft_execute_code',
+      arguments: {
+        world_name: 'test-world',
+        code: 'print(1)',
+        task_id: 't',
+        reason: 'laying the stone foundation next to you',
+      },
+    })
+    expect(bot.chats).toContain('[devrig] laying the stone foundation next to you')
+  })
+
+  it('narrates failures into the chat too', async () => {
+    await joinAndSpawn()
+    await exec('throw new Error("no reachable face")')
+    expect(bot.chats.some((c) => c.startsWith('[devrig] hit a snag:'))).toBe(true)
   })
 
   it('screenshot returns the M1 guidance error', async () => {

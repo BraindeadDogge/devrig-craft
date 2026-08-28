@@ -71,3 +71,9 @@ print(outcome === 'arrived' ? `arrived (${d.toFixed(1)} away)` : `could not reac
 If even the relaxed attempt fails, say so and pick a different spot — in
 creative you can also fly over obstacles (`bot.creative.startFlying()` before
 the goto often fixes "stuck in a ravine").
+
+**Avoid `bot.creative.flyTo`.** It hangs indefinitely when the host client
+does not accept the flight state (common on Open-to-LAN worlds), and racing
+it against a timer leaves the bot frozen mid-air anyway. `bot.pathfinder.goto`
+with the movements set handles creative flight-free travel reliably; if you
+must fly, `startFlying()` + goto beats flyTo.
