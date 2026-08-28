@@ -80,7 +80,8 @@ body of an async function, so top-level `await` is expected.
    flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
    and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.
 9. **Check you can move before you plan.** A rejoining bot spawns where it
-   disconnected — possibly boxed inside leftovers. First action after
-   state=ready: the one-second mobility self-test from the house recipe
-   (step forward, measure, `/tp` to open ground if frozen). Never spend
-   minutes diagnosing movement while the human watches a statue.
+   disconnected — possibly boxed inside leftovers, or left HOVERING mid-air
+   by server-side flight state (a walk test passes while flying, so check
+   altitude first: solid ground more than 1 block below feet → `/tp` down).
+   The house recipe's `ensureMobile` does both checks in ~2 seconds. Never
+   spend minutes diagnosing movement while the human watches a statue.

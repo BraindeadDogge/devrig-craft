@@ -56,6 +56,23 @@ try { bot.creative.stopFlying() } catch (e) { /* not flying */ }
 // pathfinder then fails silently and every placement is 'out of reach'.
 // Detect it in one second and recover instead of debugging on camera.
 async function ensureMobile() {
+  // 1) GROUND CHECK FIRST. A rejoining bot can be left hovering high in the
+  // air by server-side flight state — it then passes a walk test (flight
+  // drift moves it) while every ground cell sits 20 blocks out of reach.
+  const feet = bot.entity.position.floored()
+  let drop = 0
+  while (drop < 40) {
+    const below = bot.blockAt(feet.offset(0, -1 - drop, 0))
+    if (below && below.boundingBox === 'block') break
+    drop++
+  }
+  if (drop > 1) {
+    bot.chat(`I rejoined floating ${drop} blocks up — coming down to earth.`)
+    bot.chat(`/tp ${bot.username} ${BASE.x + 3} ${y0} ${BASE.z - 2}`)
+    await sleep(1500)
+  }
+  try { bot.creative.stopFlying() } catch (e) { /* fine */ }
+  // 2) walk test: detects being boxed in by leftovers.
   const start = bot.entity.position.clone()
   await bot.lookAt(start.offset(1, 1.62, 0), true)
   bot.setControlState('forward', true)
