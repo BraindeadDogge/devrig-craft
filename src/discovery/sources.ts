@@ -2,7 +2,7 @@ import dgram from 'node:dgram'
 import mc from 'minecraft-protocol'
 import type { NewPingResult, OldPingResult } from 'minecraft-protocol'
 import { parseLanAnnouncement } from './lanParser.js'
-import type { LanSource, PingResult, PingSource } from './snapshot.js'
+import type { LanSource, PingResult, PingSource } from './types.js'
 
 const LAN_GROUP = '224.0.2.60'
 export const LAN_PORT = 4445
@@ -14,7 +14,12 @@ export function collectLanAnnouncements(windowMs = 1800, port = LAN_PORT): Retur
   return new Promise((resolve) => {
     const found: Array<{ motd: string; port: number; host: string }> = []
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
+    let finished = false
+    let windowTimer: NodeJS.Timeout | undefined
     const done = () => {
+      if (finished) return
+      finished = true
+      clearTimeout(windowTimer)
       try {
         sock.close()
       } catch (e) {
@@ -37,7 +42,7 @@ export function collectLanAnnouncements(windowMs = 1800, port = LAN_PORT): Retur
         // No multicast on this interface — loopback datagrams still arrive.
         console.error('lan multicast join failed:', e)
       }
-      setTimeout(done, windowMs)
+      windowTimer = setTimeout(done, windowMs)
     })
   })
 }

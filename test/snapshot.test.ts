@@ -62,6 +62,20 @@ describe('buildSnapshot', () => {
     expect(worlds[0]!.version).toBeNull()
     expect(worlds[0]!.compatible).toBe(false)
   })
+
+  it('does not double-list a local LAN world that also matches an extra port', async () => {
+    // The announcement arrives from the machine's LAN interface IP, never
+    // 127.0.0.1 — the overlap guard must key on local interfaces, not loopback.
+    const lan = async () => [{ motd: 'My World', port: 25565, host: '192.168.1.10' }]
+    const worlds = await buildSnapshot(lan, ping('1.21.4'), [25565], new Set(['192.168.1.10']))
+    expect(worlds).toHaveLength(1)
+    expect(worlds[0]).toMatchObject({ source: 'lan', worldName: 'my-world' })
+  })
+
+  it('dedupes repeated extra ports instead of listing phantom twins', async () => {
+    const worlds = await buildSnapshot(noLan, ping('1.20.1', 'Epic Server'), [25565, 25565])
+    expect(worlds).toHaveLength(1)
+  })
 })
 
 describe('isVersionSupported', () => {
@@ -70,5 +84,11 @@ describe('isVersionSupported', () => {
     expect(isVersionSupported('1.18')).toBe(true)
     expect(isVersionSupported('1.8.9')).toBe(false)
     expect(isVersionSupported('1.22')).toBe(false)
+  })
+
+  it('handles vendor-prefixed Server List Ping version names', () => {
+    expect(isVersionSupported('Paper 1.21.4')).toBe(true)
+    expect(isVersionSupported('Velocity 1.7.2-1.21.4')).toBe(true)
+    expect(isVersionSupported('Spigot 1.8.8')).toBe(false)
   })
 })
