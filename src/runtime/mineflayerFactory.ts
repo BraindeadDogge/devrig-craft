@@ -16,6 +16,25 @@ const { pathfinder, Movements, goals } = pathfinderPkg
 export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) => {
   const bot = mineflayer.createBot({ host, port, username, auth })
   bot.loadPlugin(pathfinder)
+
+  // Auto-jump for RAW forward movement (mobility self-tests, unstick walks):
+  // walking into a 1-block ledge otherwise pins the bot against it forever —
+  // observed live when a bot rejoined inside leftover walls. Only manages the
+  // jump control it set itself, so pathfinder's own jumps are untouched.
+  let autoJumping = false
+  bot.on('physicsTick', () => {
+    const forward = bot.getControlState('forward')
+    const collided = Boolean(
+      (bot.entity as { isCollidedHorizontally?: boolean }).isCollidedHorizontally,
+    )
+    if (forward && collided && bot.entity.onGround) {
+      autoJumping = true
+      bot.setControlState('jump', true)
+    } else if (autoJumping && (!forward || !collided)) {
+      autoJumping = false
+      bot.setControlState('jump', false)
+    }
+  })
   ;(bot as unknown as { craftScope: () => Record<string, unknown> }).craftScope = () => ({
     bot,
     Vec3,
