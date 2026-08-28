@@ -186,6 +186,14 @@ describe('craft MCP server', () => {
     expect(logged).toMatchObject({ execution_id: id, success_rating: 0.9 })
   })
 
+  it('fetches a recipe by mcp-craft URI', async () => {
+    const res = await client.callTool({
+      name: 'craft_fetch_resource',
+      arguments: { uri: 'mcp-craft://skill/building' },
+    })
+    expect(text(res)).toContain('placeBlock')
+  })
+
   it('fetch_resource rejects unknown URIs with guidance', async () => {
     const res = await client.callTool({
       name: 'craft_fetch_resource',
