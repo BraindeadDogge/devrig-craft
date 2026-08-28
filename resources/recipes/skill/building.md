@@ -48,7 +48,11 @@ for (let dx = -12; dx <= 12; dx += 1) {
 print(best ? `build here: ${best.x} ${best.y} ${best.z}` : 'no flat 5x5 nearby — level the ground or use /fill')
 ```
 
-`best.y` is the *first air layer*, which is where the walls start.
+`best.y` is the *first air layer*, which is where the walls start. **Do not
+"lay a floor" at ground level** — that cell is the ground block itself and
+placing into it hangs (see Step 3). The ground is your floor; if the human
+wants planks underfoot, dig each ground block first, then place into the
+hole.
 
 ## Step 2 — creative flight and a stocked hotbar
 
@@ -70,13 +74,21 @@ if (bot.game.gameMode !== 'creative') {
 ## Step 3 — the place loop, with reach handled
 
 `bot.placeBlock(referenceBlock, faceVector)` clicks an **existing** block's
-face; the new block appears at `reference.position.plus(faceVector)`. Two
+face; the new block appears at `reference.position.plus(faceVector)`. Three
 constraints bite constantly:
 
 - the reference block must be solid — you cannot place against air;
-- the target must be within ~4.5 blocks, and the bot must be looking at it.
+- the target must be within ~4.5 blocks, and the bot must be looking at it;
+- **the target cell must be empty.** If it already holds a solid block (the
+  ground itself, a leftover from a previous attempt), the server silently
+  rejects the click and `bot.placeBlock` **hangs forever** waiting for a
+  block update that never comes. On flat ground this bites immediately:
+  the "floor" at ground level IS the grass layer — use the existing ground
+  as the floor (start walls at the first air layer), or dig the cell first.
 
-So: derive the reference from the target, and walk closer when out of reach.
+So: derive the reference from the target, walk closer when out of reach, and
+NEVER await a bare `placeBlock` — race it with a timeout and re-check
+`blockAt`, as the loop below does.
 
 ```js
 // Place a 5x5x3 stone box with a door gap, repositioning when out of reach.
@@ -90,7 +102,8 @@ bot.pathfinder.setMovements(new Movements(bot))
 
 async function place(target) {
   const existing = bot.blockAt(target)
-  if (existing && existing.boundingBox === 'block') return 'already there'
+  // Occupied cell: placing into it makes placeBlock hang forever. Say so.
+  if (existing && existing.boundingBox === 'block') return `occupied by ${existing.name}`
   for (const face of FACES) {
     const ref = bot.blockAt(target.minus(face))
     if (!ref || ref.boundingBox !== 'block') continue
@@ -98,10 +111,16 @@ async function place(target) {
       await bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, 2))
     }
     await bot.lookAt(target.offset(0.5, 0.5, 0.5), true)
-    await bot.placeBlock(ref, face)
-    return 'placed'
+    // NEVER await placeBlock bare — it hangs when the server rejects the
+    // click. Race a 4s watchdog and trust blockAt, not the promise.
+    await Promise.race([
+      bot.placeBlock(ref, face).catch(() => {}),
+      sleep(4000),
+    ])
+    if (bot.blockAt(target)?.boundingBox === 'block') return 'placed'
+    // Placement did not land — try the next face.
   }
-  return 'no solid face to click'
+  return 'no landed placement from any face'
 }
 
 const isWall = (dx, dz) => dx === 0 || dz === 0 || dx === 4 || dz === 4
