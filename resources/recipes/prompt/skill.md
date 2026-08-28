@@ -65,3 +65,9 @@ body of an async function, so top-level `await` is expected.
    building article has the loop that does this correctly.
 5. **The human is standing right there.** Do not build on top of them, do not
    dig out the floor under them, and prefer a spot a few blocks away.
+6. **Narrate in the game chat — you are being watched.** Your `reason` is
+   automatically spoken into the chat when a script starts; inside long
+   scripts, add your own `bot.chat('...')` one-liners at every phase change:
+   the plan, each milestone, the verification verdict. Think out loud, keep
+   each line under ~200 chars, and never go silent for more than a phase —
+   the running commentary is half the show.
