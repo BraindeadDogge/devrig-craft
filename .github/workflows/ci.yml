@@ -19,8 +19,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      # TODO(#10): add `npm run test:pack` once the CLI entry point lands —
-      # the bin points at dist/cli.js, so the pack smoke fails until then.
+      - run: npm run test:pack
   integration:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
