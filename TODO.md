@@ -4,10 +4,7 @@ Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
 
 ## Blocked on other tracks
 
-- **CI: add `npm run test:pack` to the `unit` job** once Task 10 / issue #10
-  (CLI entry point) lands. `package.json` declares `bin: dist/cli.js`, so the
-  pack smoke currently dies with `devrig-craft: command not found` after
-  successfully checking that `resources/recipes/prompt/skill.md` is packed.
+- ~~CI: add `npm run test:pack` to the `unit` job~~ — restored with Task 10.
 - ~~Recipe fetch happy-path test~~ — landed with PR #14.
 - **Validate the recipe placement idioms against a live server** during Task 12
   (issue #11). The fence contract proves they type-check against mineflayer's
