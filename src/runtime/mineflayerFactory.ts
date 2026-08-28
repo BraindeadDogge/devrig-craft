@@ -59,24 +59,33 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
   // past ~4.5. Every placeBlock/dig first TURNS the head smoothly toward the
   // target (visible, human), and refuses targets out of arm's reach with an
   // actionable error instead of silently spawning blocks behind the back.
-  const REACH = 4.5
-  const eye = () => bot.entity.position.offset(0, 1.62, 0)
-  const origPlaceBlock = bot.placeBlock.bind(bot)
-  bot.placeBlock = async (ref, face) => {
-    const target = ref.position.plus(face).offset(0.5, 0.5, 0.5)
-    if (eye().distanceTo(target) > REACH)
-      throw new Error(`placeBlock: target ${target.floored()} is out of arm's reach (${REACH}) — walk closer first`)
-    await bot.lookAt(target, false) // smooth turn: the human sees the head move
-    return origPlaceBlock(ref, face)
-  }
-  const origDig = bot.dig.bind(bot)
-  bot.dig = (async (block: Parameters<typeof origDig>[0], ...rest: unknown[]) => {
-    const target = block.position.offset(0.5, 0.5, 0.5)
-    if (eye().distanceTo(target) > REACH)
-      throw new Error(`dig: block ${block.position} is out of arm's reach (${REACH}) — walk closer first`)
-    await bot.lookAt(target, false)
-    return (origDig as (...args: unknown[]) => Promise<void>)(block, ...rest)
-  }) as typeof bot.dig
+  // Patched on 'inject_allowed': mineflayer attaches placeBlock/dig via
+  // plugins AFTER createBot returns — binding them synchronously here reads
+  // undefined and breaks the join.
+  bot.once('inject_allowed', () => {
+    if (typeof bot.placeBlock !== 'function' || typeof bot.dig !== 'function') {
+      console.error('human placement contract NOT installed: placeBlock/dig missing after inject_allowed')
+      return
+    }
+    const REACH = 4.5
+    const eye = () => bot.entity.position.offset(0, 1.62, 0)
+    const origPlaceBlock = bot.placeBlock.bind(bot)
+    bot.placeBlock = async (ref, face) => {
+      const target = ref.position.plus(face).offset(0.5, 0.5, 0.5)
+      if (eye().distanceTo(target) > REACH)
+        throw new Error(`placeBlock: target ${target.floored()} is out of arm's reach (${REACH}) — walk closer first`)
+      await bot.lookAt(target, false) // smooth turn: the human sees the head move
+      return origPlaceBlock(ref, face)
+    }
+    const origDig = bot.dig.bind(bot)
+    bot.dig = (async (block: Parameters<typeof origDig>[0], ...rest: unknown[]) => {
+      const target = block.position.offset(0.5, 0.5, 0.5)
+      if (eye().distanceTo(target) > REACH)
+        throw new Error(`dig: block ${block.position} is out of arm's reach (${REACH}) — walk closer first`)
+      await bot.lookAt(target, false)
+      return (origDig as (...args: unknown[]) => Promise<void>)(block, ...rest)
+    }) as typeof bot.dig
+  })
 
   return bot as unknown as BotLike
 }
