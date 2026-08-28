@@ -16,7 +16,8 @@ right few lines of mineflayer, and that is what the articles below teach.
 
 | URI | What it covers |
 |---|---|
-| `mcp-craft://skill/building` | The happy path: pick a flat spot, stock the hotbar in creative, `placeBlock` a house, handle reach, verify the result. |
+| `mcp-craft://skill/house` | **Building a house? Start HERE.** A complete, tuned one-call build: walls, windows, gable roof, furniture, door — copy, set BASE, run. |
+| `mcp-craft://skill/building` | Placement fundamentals: the place loop, reach, occupied cells, verification. Read when the house recipe does not fit the request. |
 | `mcp-craft://skill/building-with-commands` | `/fill`, `/setblock` and `/give` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
 | `mcp-craft://skill/world-queries` | `blockAt`, `findBlocks`, entity queries, and **the verification pattern** — how to prove what you built is actually there. |
 | `mcp-craft://skill/navigation` | Pathfinder: goto, following the human, dynamic goals, stuck recovery with a watchdog. |
@@ -71,3 +72,10 @@ body of an async function, so top-level `await` is expected.
    the plan, each milestone, the verification verdict. Think out loud, keep
    each line under ~200 chars, and never go silent for more than a phase —
    the running commentary is half the show.
+7. **Do not compose long scripts from scratch — thinking time is frozen-bot
+   time.** The articles carry complete, tuned fences (the house build is one
+   call, `mcp-craft://skill/house`): copy, set the parameters, run. Send the
+   first script within seconds of joining; adapt afterwards.
+8. **Movement that hangs:** never `bot.creative.flyTo`, never a `goto` while
+   flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
+   and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.

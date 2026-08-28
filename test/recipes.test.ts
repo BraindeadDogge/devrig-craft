@@ -54,6 +54,7 @@ describe('recipe corpus', () => {
         'skill/building-with-commands.md',
         'skill/building.md',
         'skill/design-philosophy.md',
+        'skill/house.md',
         'skill/inventory.md',
         'skill/navigation.md',
         'skill/survival.md',
@@ -125,6 +126,7 @@ describe('recipe corpus', () => {
   it('the index lists every skill URI and the scope contract', async () => {
     const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
     for (const name of [
+      'house',
       'building',
       'building-with-commands',
       'world-queries',
