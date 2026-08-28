@@ -2,9 +2,10 @@
 
 You are driving a real Minecraft bot that a human is watching in first person.
 There are only eight `craft_*` tools, and seven of them are plumbing: list
-worlds, join, leave, fetch a recipe, take a screenshot, send feedback. The one
-that does the work is **`craft_execute_code`** — you write JavaScript, it runs
-inside the live bot process with the mineflayer API in scope.
+worlds, list bots, join, fetch a recipe, chat, take a screenshot, send
+feedback. The one that does the work is **`craft_execute_code`** — you write
+JavaScript, it runs inside the live bot process with the mineflayer API in
+scope.
 
 That is the whole design. A narrow tool surface, a full capability surface
 behind one execute-code tool, and these articles instead of a wrapper library.

@@ -20,7 +20,9 @@ const reply = await waitFor('messagestr', 2500).catch(() => null)
 if (reply) {
   const text = String(reply[0])
   print(`server said: ${text}`)
-  const denied = /unknown command|don't have permission|not allowed/i.test(text)
+  // Vanilla answers an unpermitted command with "Unknown or incomplete
+  // command, see below for error" — match that exact phrase too.
+  const denied = /unknown or incomplete command|unknown command|don't have permission|not allowed/i.test(text)
   print(denied ? 'commands are NOT available — use the placeBlock path' : 'commands are available')
 } else {
   print('no chat reply in 2.5 s — assume commands are unavailable, use the placeBlock path')
@@ -29,6 +31,22 @@ if (reply) {
 
 `/gamemode creative` is a good probe because it is idempotent and useful: if it
 works, you are also now in creative and can fly.
+
+## Step 1b — stocking up in survival: /give
+
+When the world is survival but cheats are on, you do not need creative to get
+materials — `/give` fills the inventory for the physical placeBlock path.
+Like every command, it fails silently, so count the inventory before and after:
+
+```js
+// Stock up via /give and prove it worked.
+const count = () => bot.inventory.items().filter((i) => i.name === 'stone').reduce((n, i) => n + i.count, 0)
+const before = count()
+bot.chat(`/give ${bot.username} stone 64`)
+await sleep(1000)
+const got = count() - before
+print(got > 0 ? `got ${got} stone` : '/give produced nothing — commands unavailable, gather blocks instead')
+```
 
 ## Step 2 — build the shell
 
@@ -39,7 +57,9 @@ regions into slabs and print progress between them.
 
 ```js
 // A hollow 9x4x9 stone shell with a doorway, entirely via commands.
-const base = bot.entity.position.floored().offset(-4, 0, -4)
+// NOTE the +6 x-offset: the region starts NEXT TO the bot — a /fill whose
+// region contains the bot entombs it (or shoves it onto the roof).
+const base = bot.entity.position.floored().offset(6, 0, -4)
 const far = base.offset(8, 3, 8)
 const say = (cmd) => {
   bot.chat(cmd)
@@ -53,10 +73,11 @@ await sleep(400)
 say(`/fill ${base.x + 4} ${base.y} ${base.z} ${base.x + 4} ${base.y + 1} ${base.z} air`)
 await sleep(400)
 
-// Light it up so the human can see inside.
-say(`/setblock ${base.x + 4} ${base.y + 2} ${base.z + 4} torch`)
+// Light: a torch standing on the interior floor (dy=0 is the stone floor,
+// so a torch at dy=1 has support — never /setblock a torch in mid-air).
+say(`/setblock ${base.x + 2} ${base.y + 1} ${base.z + 4} torch`)
 await sleep(400)
-print('commands sent — now verify, because a rejected command is silent')
+print(`shell base: ${base.x} ${base.y} ${base.z} — now verify, because a rejected command is silent`)
 ```
 
 Note `sleep` between commands: the chat queue is asynchronous and the world
@@ -69,8 +90,10 @@ not allowed to run all produce the same thing on your side: nothing. The only
 way to know is to look at the blocks.
 
 ```js
-// Verify the shell: walls solid, interior hollow, doorway open.
-const base = bot.entity.position.floored().offset(-4, 0, -4)
+// Verify the shell: walls solid, interior hollow, doorway open, torch lit.
+// The build fence moved the world, maybe the bot too — never re-derive the
+// base from bot.entity.position here; use the base the build fence printed.
+const base = new Vec3(100, 64, 100) // ← replace with the "shell base" printed by Step 2
 const nameAt = (v) => {
   const b = bot.blockAt(v)
   return b ? b.name : 'unloaded'
@@ -78,14 +101,19 @@ const nameAt = (v) => {
 
 let wallWrong = 0
 let hollowWrong = 0
+let unloaded = 0
 for (let dy = 0; dy < 4; dy++)
   for (let dx = 0; dx < 9; dx++)
     for (let dz = 0; dz < 9; dz++) {
       const edge = dx === 0 || dz === 0 || dx === 8 || dz === 8 || dy === 0 || dy === 3
       const doorway = dz === 0 && dx === 4 && dy < 2
+      const torch = dx === 2 && dy === 1 && dz === 4
       const name = nameAt(base.offset(dx, dy, dz))
-      if (doorway) {
+      if (name === 'unloaded') unloaded++
+      else if (doorway) {
         if (name !== 'air') hollowWrong++
+      } else if (torch) {
+        if (name !== 'torch') hollowWrong++
       } else if (edge) {
         if (name !== 'stone') wallWrong++
       } else if (name !== 'air') {
@@ -93,8 +121,9 @@ for (let dy = 0; dy < 4; dy++)
       }
     }
 
-print(`walls wrong: ${wallWrong}, interior/doorway wrong: ${hollowWrong}`)
-print(wallWrong === 0 && hollowWrong === 0 ? 'VERIFIED: shell matches the plan' : 'INCOMPLETE: re-check the /fill output above')
+print(`walls wrong: ${wallWrong}, interior wrong: ${hollowWrong}, unloaded: ${unloaded}`)
+if (unloaded > 0) print('unloaded is not missing — walk closer and re-sweep before judging')
+else print(wallWrong === 0 && hollowWrong === 0 ? 'VERIFIED: shell matches the plan' : 'INCOMPLETE: re-check the /fill output above')
 ```
 
 If the sweep reports every block `unloaded`, the region is outside the loaded

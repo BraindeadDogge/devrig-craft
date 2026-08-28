@@ -32,7 +32,10 @@ function groundY(x, z) {
 let best = null
 for (let dx = -12; dx <= 12; dx += 1) {
   for (let dz = -12; dz <= 12; dz += 1) {
-    if (Math.abs(dx) < 3 && Math.abs(dz) < 3) continue // leave the human room
+    // The PATCH spans [dx, dx+4] x [dz, dz+4]; reject any patch whose area
+    // (plus a 1-block margin) contains the human's column at (0, 0) — testing
+    // only the corner would happily pick a patch with the human inside it.
+    if (dx - 1 <= 0 && 0 <= dx + 5 && dz - 1 <= 0 && 0 <= dz + 5) continue
     const corner = anchor.offset(dx, 0, dz)
     const heights = []
     for (let x = 0; x < 5; x++) for (let z = 0; z < 5; z++) heights.push(groundY(corner.x + x, corner.z + z))
@@ -77,7 +80,8 @@ So: derive the reference from the target, and walk closer when out of reach.
 
 ```js
 // Place a 5x5x3 stone box with a door gap, repositioning when out of reach.
-const base = bot.entity.position.floored().offset(-2, 0, -2)
+// The bot has flown since Step 1 — NEVER anchor at bot.entity.position here.
+const base = new Vec3(100, 65, 100) // ← replace with the "build here" x y z printed by Step 1
 const FACES = [
   new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(1, 0, 0),
   new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1),
@@ -115,13 +119,32 @@ for (let dy = 0; dy < 3; dy++) {
     }
   }
 }
-print(`placed ${placed} blocks, ${failures.length} failures`)
+print(`placed ${placed} blocks, ${failures.length} failures, base: ${base.x} ${base.y} ${base.z}`)
 if (failures.length) printJson(failures.slice(0, 10))
 ```
 
-Add the roof the same way with `dy === 3` and no `isWall` filter, and torches
-by swapping the hotbar item to `mcData.itemsByName.torch.id` before placing on
-an inside wall face.
+Add the roof the same way with `dy === 3` and no `isWall` filter. Torches are
+their own small pass — swap the hotbar and stand them on the ground inside:
+
+```js
+// Torches on the interior floor, against opposite walls.
+const base = new Vec3(100, 65, 100) // ← the same base the place loop printed
+await bot.creative.setInventorySlot(36, new Item(mcData.itemsByName.torch.id, 4))
+bot.pathfinder.setMovements(new Movements(bot))
+for (const [dx, dz] of [[1, 1], [3, 3]]) {
+  const target = base.offset(dx, 0, dz)
+  const floor = bot.blockAt(target.offset(0, -1, 0))
+  if (!floor || floor.boundingBox !== 'block') {
+    print(`no solid floor under ${target.x} ${target.z} — skip`)
+    continue
+  }
+  if (bot.entity.position.distanceTo(target) > 4) {
+    await bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, 2))
+  }
+  await bot.placeBlock(floor, new Vec3(0, 1, 0))
+}
+print('torches placed — the sweep should now see "torch" at (1,0,1) and (3,0,3)')
+```
 
 ## Step 4 — verify, then say it is done
 
@@ -129,8 +152,9 @@ Never trust the loop. The loop can succeed while the server silently refuses a
 placement, and the human is looking at the truth.
 
 ```js
-// Expected-vs-actual sweep over the box we just built.
-const base = bot.entity.position.floored().offset(-2, 0, -2)
+// Expected-vs-actual sweep over the box we just built. Anchor on the base
+// the place loop PRINTED — the bot has moved since, its position is noise.
+const base = new Vec3(100, 65, 100) // ← replace with the base printed by the place loop
 const isWall = (dx, dz) => dx === 0 || dz === 0 || dx === 4 || dz === 4
 const isDoor = (dx, dz, dy) => dz === 0 && dx === 2 && dy < 2
 
