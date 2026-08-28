@@ -10,9 +10,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "npm run typecheck && vitest run test",
+    "test": "npm run typecheck && vitest run",
     "test:pack": "npm run build && npm pack --pack-destination build && tar -tf build/devrig-craft-0.1.0.tgz | grep -q package/resources/recipes/prompt/skill.md && npx --yes ./build/devrig-craft-0.1.0.tgz --version",
-    "test:integration": "vitest run test-integration --testTimeout 600000"
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
