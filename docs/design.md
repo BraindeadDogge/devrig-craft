@@ -167,11 +167,14 @@ reason; it cannot act on an unexplained queue delay).
   API, not pixels; screenshots are for the human/final reveal.
 - **Human placement contract (2026-08-28):** the runtime wraps
   `bot.placeBlock`/`bot.dig` on the injected bot: the head turns
-  smoothly to face the target before the action, and targets beyond
-  arm's reach (4.5) are refused with an actionable error. A raw
-  mineflayer bot can spawn blocks behind its back across half the map;
-  a demo bot may not — this is a product-authenticity constraint, not
-  a convenience wrapper, and no script can bypass it.
+  smoothly to face the target before the action; targets beyond arm's
+  reach (4.5) are refused; clicks without line of sight from the eyes
+  to the clicked FACE are refused (raycast — no placing through walls,
+  no top faces from below their plane); and actions are paced to 2–3
+  per second with random jitter. A raw mineflayer bot can spawn blocks
+  behind its back across half the map at 20/s; a demo bot may not —
+  this is a product-authenticity constraint, not a convenience
+  wrapper, and no script can bypass it.
 
 ## 7. Recipe corpus (`mcp-craft://`)
 

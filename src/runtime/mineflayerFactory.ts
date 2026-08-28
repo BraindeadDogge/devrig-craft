@@ -69,11 +69,55 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
     }
     const REACH = 4.5
     const eye = () => bot.entity.position.offset(0, 1.62, 0)
+
+    // Human pace: a person clicks 2-3 blocks a second with an uneven rhythm,
+    // not 20. Shared across place and dig.
+    let lastActionAt = 0
+    const pace = async () => {
+      const wait = lastActionAt + 260 + Math.random() * 200 - Date.now()
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+      lastActionAt = Date.now()
+    }
+
+    // Human sight: you can only click a face your eye-ray reaches first —
+    // never through walls, never a top face from underneath its plane.
+    type RayHit = { position: Vec3; intersect?: Vec3 } | null
+    const raycast = (dir: Vec3, dist: number): RayHit =>
+      (bot.world as unknown as { raycast: (f: Vec3, d: Vec3, r: number) => RayHit }).raycast(
+        eye(),
+        dir,
+        dist,
+      )
+    const canSeeFace = (refPos: Vec3, face: Vec3): boolean => {
+      const aim = refPos.offset(0.5, 0.5, 0.5).plus(face.scaled(0.5))
+      const dir = aim.minus(eye())
+      const dist = dir.norm()
+      if (dist < 0.001) return true
+      const hit = raycast(dir.scaled(1 / dist), dist + 0.6)
+      if (!hit || !hit.position || !hit.position.equals(refPos)) return false
+      if (!hit.intersect) return true
+      const axis = face.x !== 0 ? 'x' : face.y !== 0 ? 'y' : 'z'
+      const plane = (refPos as unknown as Record<string, number>)[axis] + ((face as unknown as Record<string, number>)[axis] > 0 ? 1 : 0)
+      return Math.abs((hit.intersect as unknown as Record<string, number>)[axis] - plane) < 0.01
+    }
+    const canSeeBlockCenter = (pos: Vec3): boolean => {
+      const dir = pos.offset(0.5, 0.5, 0.5).minus(eye())
+      const dist = dir.norm()
+      if (dist < 0.001) return true
+      const hit = raycast(dir.scaled(1 / dist), dist + 0.6)
+      return Boolean(hit && hit.position && hit.position.equals(pos))
+    }
+
     const origPlaceBlock = bot.placeBlock.bind(bot)
     bot.placeBlock = async (ref, face) => {
       const target = ref.position.plus(face).offset(0.5, 0.5, 0.5)
       if (eye().distanceTo(target) > REACH)
         throw new Error(`placeBlock: target ${target.floored()} is out of arm's reach (${REACH}) — walk closer first`)
+      if (!canSeeFace(ref.position, face))
+        throw new Error(
+          `placeBlock: no line of sight to that face of ${ref.name} at ${ref.position} — a person cannot click through blocks; reposition (or get above/beside it) first`,
+        )
+      await pace()
       await bot.lookAt(target, false) // smooth turn: the human sees the head move
       return origPlaceBlock(ref, face)
     }
@@ -82,6 +126,9 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
       const target = block.position.offset(0.5, 0.5, 0.5)
       if (eye().distanceTo(target) > REACH)
         throw new Error(`dig: block ${block.position} is out of arm's reach (${REACH}) — walk closer first`)
+      if (!canSeeBlockCenter(block.position))
+        throw new Error(`dig: no line of sight to ${block.name} at ${block.position} — a person cannot mine through walls`)
+      await pace()
       await bot.lookAt(target, false)
       return (origDig as (...args: unknown[]) => Promise<void>)(block, ...rest)
     }) as typeof bot.dig

@@ -38,10 +38,12 @@ print(gy === null ? 'no ground found — move first' : `BASE: new Vec3(${gx}, ${
 
 ## Step 2 — the one-call build
 
-Paste the printed `BASE` into the constant and run. Everything else is
-self-contained: materials, anchors, walls, windows, furniture, ceiling,
-stepped gable roof via three 2-step staircases (torn down afterwards), and
-the front door — with chat narration at every phase.
+Paste the printed `BASE` into the constant and run **with `timeout: 480`** —
+the runtime paces every click to human speed (2–3 blocks/s), so the honest
+build takes several minutes. Everything else is self-contained: materials,
+walls, windows, furniture, ceiling, a roofer's walk over the top for the
+gable (staircases built by climbing them, torn down afterwards), and the
+front door — with chat narration at every phase.
 
 ```js
 const BASE = new Vec3(100, -61, 100) // ← the BASE printed by Step 1 (y = ground layer)
@@ -164,14 +166,26 @@ async function put(dx, dy, dz, mat) {
   }
   if (!inReach(target)) return 'out of reach'
   await hold(mat)
-  for (const face of FACES) {
-    const ref = bot.blockAt(target.minus(face))
-    if (!ref || ref.boundingBox !== 'block') continue
-    await bot.lookAt(target.offset(0.5, 0.5, 0.5), true)
-    await Promise.race([bot.placeBlock(ref, face).catch(() => {}), sleep(2500)])
-    if (bot.blockAt(target)?.boundingBox === 'block') { placed++; return 'placed' }
+  // The runtime enforces the human contract itself: it turns the head, paces
+  // the clicks, and REFUSES faces without line of sight — so just try faces
+  // and trust blockAt.
+  async function tryFaces() {
+    for (const face of FACES) {
+      const ref = bot.blockAt(target.minus(face))
+      if (!ref || ref.boundingBox !== 'block') continue
+      await Promise.race([bot.placeBlock(ref, face).catch(() => {}), sleep(3500)])
+      if (bot.blockAt(target)?.boundingBox === 'block') return true
+    }
+    return false
   }
-  return 'no face'
+  if (await tryFaces()) { placed++; return 'placed' }
+  // A person jumps to see over a near edge — one assisted retry.
+  bot.setControlState('jump', true)
+  await sleep(180)
+  const landed = await tryFaces()
+  bot.setControlState('jump', false)
+  if (landed) { placed++; return 'placed' }
+  return 'no visible face'
 }
 
 // --- phase 1: walls, from the inside center (everything is in reach) ---
@@ -201,47 +215,75 @@ for (const [x, z, mat] of [[1, 3, 'red_bed'], [5, 4, 'chest'], [5, 1, 'crafting_
 bot.chat('Ceiling on...')
 for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) await put(x, 3, z, 'oak_planks')
 
-// --- phase 4: scaffolding staircases (torn down later), then the stepped roof ---
-bot.chat('Now the gable roof — putting up little staircases to reach the ridge, like scaffolding.')
-const SCAFFOLD = [
-  [5, 0, -1], [4, 0, -1], [4, 1, -1], // front, stand on (4,1,-1)
-  [1, 0, 6], [2, 0, 6], [2, 1, 6],    // back, stand on (2,1,6)
-  [-1, 0, 3], [-1, 0, 2], [-1, 1, 2], // west, stand on (-1,1,2)
-]
-await walkTo(3, 0, -2)
-for (const [x, dy, z] of SCAFFOLD) await put(x, dy, z, 'oak_planks')
-
-const roof = []
-for (let x = 0; x < W; x++) {
-  for (const z of [1, 2, 3, 4]) roof.push({ x, dy: 4, z })
-  for (const z of [2, 3]) roof.push({ x, dy: 5, z })
-}
-const ANCHORS = [
-  [1, 0, -2], [5, 0, -2], [1, 0, 7], [5, 0, 7], // ground, four sides
-  [4, 2, -1], [2, 2, 6], [-1, 2, 2],            // staircase tops for the ridge
-]
-let remaining = roof
-for (const [ax, ay, az] of ANCHORS) {
-  if (remaining.length === 0) break
-  await walkTo(ax, ay, az)
-  if (ay > 0) bot.setControlState('sneak', true) // edge work: sneaking means you cannot fall off
-  const next = []
-  for (const c of remaining) {
-    const r = await put(c.x, c.dy, c.z, 'oak_planks')
-    if (r !== 'placed' && r !== 'occupied') next.push(c)
+// --- phase 4: the roof, walked like a roofer ---
+// The runtime refuses clicks without line of sight, so a roof CANNOT be
+// placed from the ground "through" the house. Do it the human way: build a
+// staircase step by step (climbing as it grows — you cannot place a step
+// whose face you cannot see), walk onto the ceiling, and lay the slope rows
+// from up there with sneak held. Row order matters: far row first, then the
+// ridge, then the near row — otherwise your own fresh blocks block the view.
+bot.chat('Roof time — building my way up like a roofer, scaffold first.')
+async function buildStairs(cols, z) {
+  for (const [sx] of cols) await put(sx, 0, z, 'oak_planks')
+  for (let level = 1; level < cols.length; level++) {
+    await walkTo(cols[level - 1][0], level, z)
+    for (let i = level; i < cols.length; i++) await put(cols[i][0], level, z, 'oak_planks')
   }
-  if (ay > 0) bot.setControlState('sneak', false)
-  remaining = next
 }
-if (remaining.length > 0) bot.chat(`Roof: ${remaining.length} blocks I could not reach — will report them in the verify sweep.`)
+const FRONT_STAIRS = [[5, 0], [4, 1], [3, 2]]
+const BACK_STAIRS = [[1, 0], [2, 1], [3, 2]]
+await walkTo(6, 0, -2)
+await buildStairs(FRONT_STAIRS, -1)
+await walkTo(3, 3, -1) // top of the staircase
+await walkTo(3, 4, 0) // step onto the ceiling: the north walkway
+bot.setControlState('sneak', true) // you cannot walk off an edge while sneaking
+for (let x = 0; x < W; x++) {
+  await walkTo(x, 4, 0)
+  await put(x, 4, 2, 'oak_planks') // far row first — keep your own view clear
+  await put(x, 5, 2, 'oak_planks') // ridge, north half
+  await put(x, 4, 1, 'oak_planks') // near row last
+}
+bot.setControlState('sneak', false)
+bot.chat('North slope done — heading around to the south side.')
+await walkTo(3, 3, -1)
+await walkTo(3, 0, -2)
+await walkTo(1, 0, 7)
+await buildStairs(BACK_STAIRS, 6)
+await walkTo(3, 3, 6)
+await walkTo(3, 4, 5) // the south walkway
+bot.setControlState('sneak', true)
+for (let x = 0; x < W; x++) {
+  await walkTo(x, 4, 5)
+  await put(x, 4, 3, 'oak_planks')
+  await put(x, 5, 3, 'oak_planks')
+  await put(x, 4, 4, 'oak_planks')
+}
+// Roof self-check WHILE the scaffolding still stands — patch from up here,
+// not after coming down (holes found later cost a whole re-climb).
+const roofHoles = []
+for (const { dy, zs } of [{ dy: 4, zs: [1, 2, 3, 4] }, { dy: 5, zs: [2, 3] }])
+  for (const z of zs)
+    for (let x = 0; x < W; x++)
+      if (bot.blockAt(BASE.offset(x, 1 + dy, z))?.boundingBox !== 'block') roofHoles.push({ x, dy, z })
+for (const h of roofHoles) {
+  await walkTo(h.x, 4, h.z <= 2 ? 0 : 5)
+  await put(h.x, h.dy, h.z, 'oak_planks')
+}
+bot.setControlState('sneak', false)
+bot.chat(roofHoles.length ? `Patched ${roofHoles.length} roof holes before coming down.` : 'Roof is tight — coming down.')
 
-// --- phase 5: tear the scaffolding down, hang the door, done ---
+// --- phase 5: climb down, take the scaffolding with you, hang the door ---
 bot.chat('Tearing my scaffolding down and hanging the door.')
-for (const [x, dy, z] of [...SCAFFOLD].reverse()) {
-  const b = bot.blockAt(BASE.offset(x, 1 + dy, z))
-  if (!b || b.boundingBox !== 'block') continue
-  if (!inReach(b.position)) await walkTo(x + (x < 0 ? 1 : x >= W ? -1 : 0), 0, z + (z < 0 ? 1 : z >= D ? -1 : 0))
-  await Promise.race([bot.dig(b).catch(() => {}), sleep(5000)])
+await walkTo(3, 3, 6)
+await walkTo(3, 0, 7)
+for (const stairs of [{ cols: BACK_STAIRS, z: 6, standZ: 7 }, { cols: FRONT_STAIRS, z: -1, standZ: -2 }]) {
+  await walkTo(3, 0, stairs.standZ)
+  for (const dy of [2, 1, 0])
+    for (const [sx, topDy] of stairs.cols) {
+      if (topDy < dy) continue
+      const b = bot.blockAt(BASE.offset(sx, 1 + dy, stairs.z))
+      if (b && b.boundingBox === 'block') await Promise.race([bot.dig(b).catch(() => {}), sleep(4000)])
+    }
 }
 await walkTo(3, 0, -2)
 await put(3, 0, 0, 'oak_door')

@@ -81,10 +81,12 @@ body of an async function, so top-level `await` is expected.
    flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
    and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.
 9. **The runtime enforces human placement.** `bot.placeBlock` and `bot.dig`
-   physically turn the bot's head toward the target (smoothly — the human
-   sees it) and REFUSE anything beyond arm's reach (4.5) with an error. You
-   cannot spawn blocks behind your back; walk within reach first — the
-   movement doctrine is `mcp-craft://skill/humanlike`.
+   turn the head smoothly toward the target, REFUSE anything beyond arm's
+   reach (4.5), REFUSE faces without line of sight (no clicking through
+   walls, no top faces from under their plane — get above or beside things
+   like a person), and pace every click to 2–3 per second with human
+   jitter. Plan builds top-down accordingly: roofs are walked, not sniped
+   from the ground. The movement doctrine is `mcp-craft://skill/humanlike`.
 10. **Check you can move before you plan.** A rejoining bot spawns where it
    disconnected — possibly boxed inside leftovers, or left HOVERING mid-air
    by server-side flight state (a walk test passes while flying, so check
