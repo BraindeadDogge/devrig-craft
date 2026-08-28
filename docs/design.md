@@ -110,7 +110,7 @@ Microsoft account.
 | `craft_join_world` | `steroid_open_project` | Async: initiates join, returns quickly (echoing resolved host:port); caller polls `craft_list_bots` until ready. Joins time out after 60 s into an error state. Params: `world_name`, optional `username` |
 | `craft_execute_code` | `steroid_execute_code` | THE tool. JS (async function body) with `bot` + scope in scope; response is `execution_id: <uuid>` on the first line, then only what the script prints. Params: `world_name`, `code` (≤100 KB), `task_id`, `reason`, `timeout` seconds (1–600, default 120) |
 | `craft_fetch_resource` | `steroid_fetch_resource` | Serves `mcp-craft://` recipe articles by URI |
-| `craft_take_screenshot` | `steroid_take_screenshot` | HEAVY ENDPOINT, debugging only. **M1 ships only the tested error branch** ("unavailable — verify via bot.blockAt sweeps"); the M2 success path returns an MCP image payload (`type: 'image'`, base64 PNG), not a file path |
+| `craft_take_screenshot` | `steroid_take_screenshot` | HEAVY ENDPOINT, debugging only. **Ships as the tested error branch only** ("unavailable — verify via bot.blockAt sweeps") — see the §13 descope decision; a future success path would return an MCP image payload (`type: 'image'`, base64), not a file path |
 | `craft_chat` | `steroid_input` | HEAVY/debug: raw chat or slash-command. Description steers agents to `craft_execute_code` (`bot.chat(...)`) instead |
 | `craft_execute_feedback` | `steroid_execute_feedback` | Same rating contract; requires an `execution_id` previously returned by `craft_execute_code` (unknown ids are rejected); appends JSONL to a local file and returns its path |
 
@@ -245,8 +245,8 @@ cheats").
 - **Protocol version lag**: mineflayer trails new Minecraft releases.
   Mitigation: pin supported range, report compat in listings, demo on
   a pinned version.
-- **headless screenshots flaky** (headless-gl): success path deferred
-  to M2 and declared best-effort; the core loop never depends on it.
+- **headless screenshots flaky** (headless-gl): materialized — descoped
+  entirely (§13); the core loop never depended on it.
 - **Placement physics edge cases** (reach, facing, collisions): the
   building recipe encodes known-good idioms; verification sweeps catch
   silent failures; the Docker smoke exercises one physical placement.
@@ -268,3 +268,11 @@ cheats").
   branch only in M1), mandatory decision tables in tool descriptions
   (no arena data to justify them yet). Non-Latin slug support stays
   dismissed: the demo is English-only.
+- Screenshot success path descoped permanently (2026-08-28, M2 Task 2):
+  `prismarine-viewer@1.33.0` has no single-frame API (its `headless()`
+  streams JPEG to ffmpeg) and its render stack requires
+  `node-canvas-webgl`/headless-gl, whose native build fails on the dev
+  machine (arm64 node-gyp) and is the classic flake on Linux CI. The
+  tool ships its tested guidance-error branch only; verification is
+  `bot.blockAt` sweeps and the human watches first-person. Revisit only
+  if a demo genuinely needs agent-side vision.

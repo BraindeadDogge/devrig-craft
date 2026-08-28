@@ -197,8 +197,9 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
     'craft_take_screenshot',
     {
       description:
-        'HEAVY ENDPOINT: render the bot POV. Not available in M1 — for verification use ' +
-        'craft_execute_code with bot.blockAt sweeps (mcp-craft://skill/world-queries).',
+        'HEAVY ENDPOINT: render the bot POV. Not available on this install (headless GL) — for ' +
+        'verification use craft_execute_code with bot.blockAt sweeps ' +
+        '(mcp-craft://skill/world-queries); the human watches the world first-person anyway.',
       inputSchema: {
         world_name: z.string().max(256),
         task_id: z.string().max(256),
@@ -207,7 +208,7 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
     },
     async () =>
       err(
-        'screenshot not available in M1 — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway',
+        'screenshot rendering is not available on this install — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway',
       ),
   )
 
