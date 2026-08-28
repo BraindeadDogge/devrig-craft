@@ -63,6 +63,13 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
   // plugins AFTER createBot returns — binding them synchronously here reads
   // undefined and breaks the join.
   bot.once('inject_allowed', () => {
+    // Human mouse flick: the default smooth-look turn is leisurely; a person
+    // snaps to a nearby block in ~150ms. Raising the turn rates keeps looks
+    // visible but quick, or a 170-block build drowns in head-turning time.
+    const physics = bot.physics as unknown as { yawSpeed?: number; pitchSpeed?: number }
+    if (typeof physics.yawSpeed === 'number') physics.yawSpeed = Math.max(physics.yawSpeed, 12)
+    if (typeof physics.pitchSpeed === 'number') physics.pitchSpeed = Math.max(physics.pitchSpeed, 12)
+
     if (typeof bot.placeBlock !== 'function' || typeof bot.dig !== 'function') {
       console.error('human placement contract NOT installed: placeBlock/dig missing after inject_allowed')
       return
