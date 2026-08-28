@@ -8,10 +8,7 @@ Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
   (CLI entry point) lands. `package.json` declares `bin: dist/cli.js`, so the
   pack smoke currently dies with `devrig-craft: command not found` after
   successfully checking that `resources/recipes/prompt/skill.md` is packed.
-- **Recipe fetch happy-path test** (Task 9 Step 5) is deliberately not in this
-  branch: issue #5 assigns it to the server owner to keep `test/server.test.ts`
-  single-writer. `craft_fetch_resource` with `mcp-craft://skill/building` now
-  has an article to return, so it can be added at any time.
+- ~~Recipe fetch happy-path test~~ — landed with PR #14.
 - **Validate the recipe placement idioms against a live server** during Task 12
   (issue #11). The fence contract proves they type-check against mineflayer's
   declarations, not that creative slot 36, `new Item(id, count)` and the reach
@@ -37,11 +34,11 @@ Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
   `src/discovery/snapshot.ts`, but they already ship frozen in
   `src/discovery/types.ts` (shared with the server track). `snapshot.ts`
   imports and re-exports them instead of duplicating the shapes.
-- `CLAUDE.md` points at `docs/plan-defects.md` and `docs/plan-review.md`; the
-  repo has `docs/m1-plan-review.md` and neither of the other two.
-- Task 11 in the plan is "README with the tenet mapping", but issue #6 assigns
-  Task 11 = CI workflow (and the plan's own Task 11 is a CI workflow). The
-  README task has no issue.
+- The merged PR #2 description mentions `docs/plan-defects.md` and
+  `docs/plan-review.md`; only `docs/m1-plan-review.md` shipped. Harmless (PR
+  text is immutable history), noted so nobody hunts for the other two files.
+- The M2 README task (M2 plan Task 3) has no GitHub issue yet — file one when
+  M1 gates.
 
 ## Known gaps in what shipped
 

@@ -4,8 +4,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: '17 4 * * 1'
+  # TODO(#11): restore the weekly schedule (cron '17 4 * * 1') in the Task 12
+  # PR that creates test-integration/ — until then a scheduled run has no
+  # tests to find and fails red every Monday.
 jobs:
   unit:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
@@ -21,7 +22,7 @@ jobs:
       # TODO(#10): add `npm run test:pack` once the CLI entry point lands —
       # the bin points at dist/cli.js, so the pack smoke fails until then.
   integration:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
