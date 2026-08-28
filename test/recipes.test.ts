@@ -46,16 +46,26 @@ const jsFences = (md: string): string[] =>
   [...md.matchAll(/```js\n([\s\S]*?)```/g)].map((m) => m[1]!)
 
 describe('recipe corpus', () => {
-  it('ships the 4 M1 articles', async () => {
+  it('ships the 8 articles (M1 + M2)', async () => {
     const paths = (await allArticles()).map((a) => a.path).sort()
     expect(paths).toEqual(
-      ['prompt/skill.md', 'skill/building-with-commands.md', 'skill/building.md', 'skill/world-queries.md'].sort(),
+      [
+        'prompt/skill.md',
+        'skill/building-with-commands.md',
+        'skill/building.md',
+        'skill/design-philosophy.md',
+        'skill/inventory.md',
+        'skill/navigation.md',
+        'skill/survival.md',
+        'skill/world-queries.md',
+      ].sort(),
     )
   })
 
-  it('every skill article has at least one js fence', async () => {
+  it('every skill article has at least one js fence, except the prose articles', async () => {
+    const proseOnly = new Set(['prompt/skill.md', 'skill/design-philosophy.md'])
     for (const a of await allArticles()) {
-      if (a.path === 'prompt/skill.md') continue
+      if (proseOnly.has(a.path)) continue
       expect(jsFences(a.text).length, `${a.path} needs a js fence`).toBeGreaterThan(0)
     }
   })
@@ -112,9 +122,17 @@ describe('recipe corpus', () => {
     }
   })
 
-  it('the index lists every M1 skill URI and the scope contract', async () => {
+  it('the index lists every skill URI and the scope contract', async () => {
     const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
-    for (const name of ['building', 'building-with-commands', 'world-queries']) {
+    for (const name of [
+      'building',
+      'building-with-commands',
+      'world-queries',
+      'navigation',
+      'inventory',
+      'survival',
+      'design-philosophy',
+    ]) {
       expect(index).toContain(`mcp-craft://skill/${name}`)
     }
     expect(index).toContain('no `require`')

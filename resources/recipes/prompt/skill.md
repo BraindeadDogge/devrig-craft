@@ -17,8 +17,12 @@ right few lines of mineflayer, and that is what the articles below teach.
 | URI | What it covers |
 |---|---|
 | `mcp-craft://skill/building` | The happy path: pick a flat spot, stock the hotbar in creative, `placeBlock` a house, handle reach, verify the result. |
-| `mcp-craft://skill/building-with-commands` | `/fill` and `/setblock` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
+| `mcp-craft://skill/building-with-commands` | `/fill`, `/setblock` and `/give` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
 | `mcp-craft://skill/world-queries` | `blockAt`, `findBlocks`, entity queries, and **the verification pattern** — how to prove what you built is actually there. |
+| `mcp-craft://skill/navigation` | Pathfinder: goto, following the human, dynamic goals, stuck recovery with a watchdog. |
+| `mcp-craft://skill/inventory` | Creative hotbar self-service, counting, survival crafting, equipping the right item before placing. |
+| `mcp-craft://skill/survival` | Health/food monitoring, eating, night and hostile-mob awareness — keeping an unattended demo alive. |
+| `mcp-craft://skill/design-philosophy` | Why this MCP looks like this: the MCP Steroid tenets mapped to Minecraft, tool-by-tool mirror table. |
 
 Fetch one with `craft_fetch_resource` before you write a script for that kind
 of task. Every ```js block in them is a complete `craft_execute_code` body,
