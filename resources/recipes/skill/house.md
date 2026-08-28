@@ -51,6 +51,25 @@ bot.pathfinder.setMovements(new Movements(bot))
 try { bot.creative.stopFlying() } catch (e) { /* not flying */ }
 
 // --- materials: one hotbar slot per material, equip once per run ---
+// --- mobility self-test FIRST: a rejoining bot spawns where it disconnected,
+// possibly boxed inside a half-built leftover or with stale flight state —
+// pathfinder then fails silently and every placement is 'out of reach'.
+// Detect it in one second and recover instead of debugging on camera.
+async function ensureMobile() {
+  const start = bot.entity.position.clone()
+  await bot.lookAt(start.offset(1, 1.62, 0), true)
+  bot.setControlState('forward', true)
+  await sleep(700)
+  bot.setControlState('forward', false)
+  if (bot.entity.position.distanceTo(start) >= 0.3) return true
+  bot.chat('I spawned stuck — teleporting to the build site rather than digging myself out.')
+  bot.chat(`/tp ${bot.username} ${BASE.x + 3} ${y0} ${BASE.z - 2}`)
+  await sleep(1500)
+  return bot.entity.position.distanceTo(start) >= 0.3
+}
+if (!(await ensureMobile()))
+  print('WARNING: still immobile after /tp (cheats off?) — dig out per mcp-craft://skill/building-with-commands before re-running')
+
 const MATS = ['oak_log', 'oak_planks', 'glass', 'torch', 'oak_door', 'red_bed', 'chest', 'crafting_table']
 const slots = {}
 for (let i = 0; i < MATS.length; i++) {
