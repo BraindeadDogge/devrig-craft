@@ -89,7 +89,12 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
         dist,
       )
     const canSeeFace = (refPos: Vec3, face: Vec3): boolean => {
-      const aim = refPos.offset(0.5, 0.5, 0.5).plus(face.scaled(0.5))
+      // Aim a hair INSIDE the face (0.45, not 0.5): a ray aimed exactly at
+      // the face plane grazes it and, at shallow angles, numerically clips a
+      // neighbor sharing that plane — measured live: adjacent placements
+      // passed while 3-blocks-away ground placements were refused. Aiming
+      // into the block makes the ray enter the ref through the clicked face.
+      const aim = refPos.offset(0.5, 0.5, 0.5).plus(face.scaled(0.45))
       const dir = aim.minus(eye())
       const dist = dir.norm()
       if (dist < 0.001) return true
@@ -98,7 +103,7 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
       if (!hit.intersect) return true
       const axis = face.x !== 0 ? 'x' : face.y !== 0 ? 'y' : 'z'
       const plane = (refPos as unknown as Record<string, number>)[axis] + ((face as unknown as Record<string, number>)[axis] > 0 ? 1 : 0)
-      return Math.abs((hit.intersect as unknown as Record<string, number>)[axis] - plane) < 0.01
+      return Math.abs((hit.intersect as unknown as Record<string, number>)[axis] - plane) < 0.05
     }
     const canSeeBlockCenter = (pos: Vec3): boolean => {
       const dir = pos.offset(0.5, 0.5, 0.5).minus(eye())
