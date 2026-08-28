@@ -2,38 +2,67 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+Revision 2 (2026-08-28): incorporates the accepted findings of the plan
+review (`docs/m1-plan-review.md`, PR #2). M2 scope moved to
+`docs/plans/2026-08-28-devrig-craft-m2.md`.
+
 **Goal:** A stdio MCP server (`devrig-craft`) that discovers running Minecraft worlds (LAN-opened clients such as Prism Launcher instances, or local offline-mode servers), joins them as a mineflayer bot, and drives the game through one code-execution tool plus a recipe corpus — mirroring the MCP Steroid tool surface 1:1.
 
-**Architecture:** One Node/TypeScript process: a stateless stdio MCP server whose discovery snapshot is rebuilt on demand per call (UDP 4445 multicast + Server List Ping), an in-process bot manager (one mineflayer bot per joined world, dies with the process), and a `vm`-sandboxed `craft_execute_code` runtime where the script's printed output is the entire tool response.
+**Architecture:** One Node/TypeScript process: a stateless stdio MCP server whose discovery snapshot is rebuilt on demand per call (UDP 4445 multicast + Server List Ping), an in-process bot manager (one mineflayer bot per joined world, dies with the process), and a `vm`-sandboxed `craft_execute_code` runtime where the script's printed output is the entire tool response (after an `execution_id` line).
 
-**Tech Stack:** Node 22+, TypeScript 5 (ESM), `@modelcontextprotocol/sdk`, `zod`, `mineflayer`, `mineflayer-pathfinder`, `minecraft-protocol` (ping), `vec3`, `prismarine-viewer` (best-effort screenshots), `vitest`.
+**Tech Stack:** Node 22+, TypeScript 5 (ESM), `@modelcontextprotocol/sdk`, `zod`, `mineflayer`, `mineflayer-pathfinder`, `minecraft-protocol` (ping), `minecraft-data`, `prismarine-item`, `vec3`, `vitest`.
 
-**Spec:** `docs/design.md` (this repo) — read it before starting; every contract below argues from it.
+**Spec:** `docs/design.md` (this repo) — read it before starting; every contract below argues from it. §2 (security non-goal), §6 (runtime limits) and §13 (decisions log) are load-bearing for this plan.
+
+**M1 gate:** `npm test` green (typecheck + unit + pack smoke) and the Task 12 Docker smoke passing on a clean machine.
 
 ## Global Constraints
 
-- Exactly 8 MCP tools, named: `craft_list_worlds`, `craft_list_bots`, `craft_join_world`, `craft_execute_code`, `craft_fetch_resource`, `craft_take_screenshot`, `craft_chat`, `craft_execute_feedback`. No additional tools — power goes into `craft_execute_code` + recipes (spec §5, Tenet 1).
-- The CLI is stateless: no state files on disk; discovery snapshot rebuilt on demand per call; in-memory bot registry dies with the process (spec §3, Tenet 3).
-- `craft_execute_code` scope is exactly: `bot`, `Vec3`, `mcData`, `print`, `printJson`, `sleep`, `waitFor` — nothing else (spec §6, Tenet 4). The response contains only what the script printed; a print-less success returns one HINT line.
+- Exactly 8 MCP tools, named: `craft_list_worlds`, `craft_list_bots`, `craft_join_world`, `craft_execute_code`, `craft_fetch_resource`, `craft_take_screenshot`, `craft_chat`, `craft_execute_feedback`. No additional tools (spec §5, Tenet 1). In M1 `craft_take_screenshot` ships only its tested error branch (spec §5).
+- The CLI is stateless: no state files on disk except the feedback JSONL in the OS temp dir; discovery snapshot rebuilt on demand per call; in-memory bot registry dies with the process (spec §3, Tenet 3).
+- `craft_execute_code` scope is exactly: `bot`, `Vec3`, `mcData`, `goals`, `Movements`, `Item`, `print`, `printJson`, `sleep`, `waitFor` — nothing else; no `require`, no dynamic `import`, no Node globals (spec §6). The response is `execution_id: <uuid>` then only what the script printed; a print-less success returns one HINT line.
+- Runtime limits (spec §6): `code` ≤ 100 000 chars; `timeout` 1–600 s (default 120); output capped ~2000 lines / 256 KB with middle truncation keeping the tail. Timeout force-disconnects the bot. Synchronous infinite loops hang the process — documented, not defended.
+- Executions are serialized per world: concurrent `craft_execute_code`/`craft_chat` against a busy bot returns an explicit "bot busy" error (spec §5).
+- All JSON tool output uses snake_case keys; camelCase never crosses the MCP boundary (spec §5).
 - No client/server mods; LAN worlds + offline-mode local servers only; bot username defaults to `devrig` (spec §2, §4).
-- Recipes are markdown with copy-paste JS blocks that must parse (`docs/../resources/recipes/*.md`, spec §7); every JS fence is syntax-checked by a contract test.
-- Tool descriptions follow the steroid house style: `task_id` + `reason` audit params on heavy tools, "prefer execute_code" steering on `craft_chat` and `craft_take_screenshot`.
-- Node built-in test tooling is vitest; unit tests must not require a running Minecraft server. Integration tests run only via the dedicated `npm run test:integration` script (task-level gating — never runtime skip-detection inside a test).
+- M1 recipes are 4 articles (spec §7); every ```js fence must **type-check** (`tsc --noEmit` against a scope prelude), not merely parse.
+- ALL logging goes to stderr — stdout is the JSON-RPC channel (never `console.log` on the server path).
+- Unit tests must not require a running Minecraft server or touch the real LAN port 4445. Integration tests run only via `npm run test:integration` (needs Docker; never auto-skips at runtime).
 - Commit style: imperative, what+why, no AI co-author mentions.
+
+## File structure
+
+```
+src/version.ts                    constants
+src/discovery/lanParser.ts        pure datagram parser
+src/discovery/slug.ts             world_name allocation
+src/discovery/snapshot.ts         snapshot builder (DI sources)
+src/discovery/sources.ts          real UDP listener + Server List Ping
+src/runtime/sandbox.ts            vm execution, limits, error shaping
+src/runtime/botManager.ts         bot lifecycle + per-world lock
+src/runtime/mineflayerFactory.ts  real bot factory + script scope
+src/wire.ts                       camelCase→snake_case boundary mapper
+src/server.ts                     the 8 MCP tools
+src/cli.ts                        stdio entry, flags, signals
+resources/recipes/                mcp-craft:// corpus
+test/                             unit tests
+test-integration/                 Docker smoke
+.github/workflows/ci.yml          unit per PR, integration on demand
+```
 
 ---
 
 ### Task 1: Project scaffold
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `vitest.config.ts`, `.gitignore`, `src/version.ts`, `test/version.test.ts`
+- Create: `package.json`, `tsconfig.json`, `tsconfig.test.json`, `vitest.config.ts`, `.gitignore`, `src/version.ts`, `test/version.test.ts`
 
 **Interfaces:**
-- Produces: ESM TypeScript project where `npm test` runs vitest; `SERVER_NAME = 'devrig-craft'`, `SERVER_VERSION` exported from `src/version.ts`.
+- Produces: ESM TypeScript project where `npm test` = typecheck (src + tests) + vitest; `SERVER_NAME = 'devrig-craft'`, `SERVER_VERSION` exported from `src/version.ts`; `files` whitelist already carries `dist` + `resources` for the Task 10 pack smoke.
 
 - [ ] **Step 1: Write config files**
 
-`package.json`:
+`package.json` (note: `minecraft-data` and `prismarine-item` are declared directly — both are used by `src/`, and relying on transitive resolution through mineflayer is a latent break):
 
 ```json
 {
@@ -43,10 +72,13 @@
   "type": "module",
   "license": "Apache-2.0",
   "bin": { "devrig-craft": "dist/cli.js" },
+  "files": ["dist", "resources"],
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --exclude 'test-integration/**'",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "npm run typecheck && vitest run test",
+    "test:pack": "npm run build && npm pack --pack-destination build && tar -tf build/devrig-craft-0.1.0.tgz | grep -q package/resources/recipes/prompt/skill.md && npx --yes ./build/devrig-craft-0.1.0.tgz --version",
     "test:integration": "vitest run test-integration --testTimeout 600000"
   },
   "dependencies": {
@@ -54,19 +86,21 @@
     "mineflayer": "^4.20.0",
     "mineflayer-pathfinder": "^2.4.5",
     "minecraft-protocol": "^1.47.0",
+    "minecraft-data": "^3.0.0",
+    "prismarine-item": "^1.15.0",
     "vec3": "^0.1.10",
     "zod": "^3.24.0"
-  },
-  "optionalDependencies": {
-    "prismarine-viewer": "^1.28.0"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
+    "tsx": "^4.19.0",
     "@types/node": "^22.0.0"
   }
 }
 ```
+
+After `npm install`, align the two pinned ranges with reality: `npm ls minecraft-data prismarine-item` and set the ranges to what the installed mineflayer actually pulls, so both resolve to a single copy.
 
 `tsconfig.json`:
 
@@ -86,6 +120,16 @@
 }
 ```
 
+`tsconfig.test.json` (typechecks tests too — vitest transpiles without checking, so without this a typo in a test surfaces as an obscure runtime error):
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "noEmit": true },
+  "include": ["src", "test", "test-integration"]
+}
+```
+
 `vitest.config.ts`:
 
 ```ts
@@ -98,6 +142,7 @@ export default defineConfig({ test: { include: ['test/**/*.test.ts', 'test-integ
 ```
 node_modules/
 dist/
+build/
 *.log
 ```
 
@@ -124,13 +169,13 @@ describe('scaffold', () => {
 - [ ] **Step 2: Install and run the test**
 
 Run: `npm install && npm test`
-Expected: 1 test PASS.
+Expected: typecheck clean, 1 test PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add package.json tsconfig.json vitest.config.ts .gitignore src/version.ts test/version.test.ts package-lock.json
-git commit -m "Scaffold devrig-craft: TypeScript ESM project with vitest"
+git add package.json tsconfig.json tsconfig.test.json vitest.config.ts .gitignore src/version.ts test/version.test.ts package-lock.json
+git commit -m "Scaffold devrig-craft: TypeScript ESM project, typechecked tests"
 ```
 
 ---
@@ -144,7 +189,7 @@ git commit -m "Scaffold devrig-craft: TypeScript ESM project with vitest"
 **Interfaces:**
 - Produces: `parseLanAnnouncement(payload: string): { motd: string, port: number } | null`
 
-Minecraft clients that pressed *Open to LAN* broadcast UDP datagrams to `224.0.2.60:4445` every ~1.5 s with the payload `[MOTD]<world name>[/MOTD][AD]<port>[/AD]`. This parser is a pure function over that payload.
+Minecraft clients that pressed *Open to LAN* broadcast UDP datagrams to `224.0.2.60:4445` every ~1.5 s with the payload `[MOTD]<world name>[/MOTD][AD]<port>[/AD]`. This parser is a pure function over that payload. (M1 tests use synthetic strings; a real captured datagram joins these fixtures during the M2 manual validation — spec §9.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -193,7 +238,7 @@ export function parseLanAnnouncement(payload: string): { motd: string; port: num
   if (!m) return null
   const port = Number(m[2])
   if (port < 1 || port > 65535) return null
-  return { motd: m[1], port }
+  return { motd: m[1]!, port }
 }
 ```
 
@@ -218,7 +263,7 @@ git commit -m "Parse Minecraft LAN world announcements ([MOTD]/[AD] datagrams)"
 - Test: `test/slug.test.ts`
 
 **Interfaces:**
-- Produces: `worldSlug(displayName: string, taken: Set<string>): string` — lowercase kebab slug, deduplicated with `-2`, `-3`, … suffixes. This is the `world_name` routing key (mirrors devrig's `project_name` slug rule).
+- Produces: `worldSlug(displayName: string, taken: Set<string>): string` — lowercase kebab slug, deduplicated with `-2`, `-3`, … suffixes. This is the `world_name` routing key (mirrors devrig's `project_name` slug rule). ASCII-only by decision (spec §13: the demo is English-only); slug *stability across snapshots* is Task 4's responsibility (deterministic input ordering).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -293,15 +338,14 @@ git commit -m "Add world_name slug allocation with dedup (devrig naming mirror)"
 - Test: `test/snapshot.test.ts`
 
 **Interfaces:**
-- Consumes: `parseLanAnnouncement`, `worldSlug` (Tasks 2–3).
+- Consumes: `worldSlug` (Task 3).
 - Produces:
-  - `type DiscoveredWorld = { worldName: string; displayName: string; host: string; port: number; source: 'lan' | 'server'; version: string | null; compatible: boolean }`
+  - `type PingResult = { version: string; motd: string; players: { online: number; max: number } | null }`
+  - `type DiscoveredWorld = { worldName: string; displayName: string; host: string; port: number; source: 'lan' | 'server'; version: string | null; players: { online: number; max: number } | null; compatible: boolean }`
   - `type LanSource = () => Promise<Array<{ motd: string; port: number; host: string }>>`
-  - `type PingSource = (host: string, port: number) => Promise<{ version: string } | null>`
-  - `buildSnapshot(lan: LanSource, ping: PingSource, extraPorts?: number[]): Promise<DiscoveredWorld[]>`
+  - `type PingSource = (host: string, port: number) => Promise<PingResult | null>`
+  - `buildSnapshot(lan: LanSource, ping: PingSource, extraPorts?: number[]): Promise<DiscoveredWorld[]>` — **deterministic**: announcements sorted by (host, port) before slug allocation (spec §4 stability rule); all pings run in parallel.
   - `isVersionSupported(version: string): boolean` — true when the major.minor is within `SUPPORTED_RANGE = ['1.18', '1.21']` (pin; update as mineflayer catches up).
-
-Sources are injected so the builder is unit-testable without sockets. Real sources come in Task 5.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -309,16 +353,17 @@ Sources are injected so the builder is unit-testable without sockets. Real sourc
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { buildSnapshot, isVersionSupported } from '../src/discovery/snapshot.js'
+import { buildSnapshot, isVersionSupported, type PingResult } from '../src/discovery/snapshot.js'
 
 const noLan = async () => []
 const noPing = async () => null
+const ping = (version: string, motd = '', players: PingResult['players'] = null) =>
+  async () => ({ version, motd, players })
 
 describe('buildSnapshot', () => {
   it('lists LAN worlds with slugs and version from ping', async () => {
     const lan = async () => [{ motd: "Grigorii's world", port: 54321, host: '192.168.1.10' }]
-    const ping = async () => ({ version: '1.21.4' })
-    const worlds = await buildSnapshot(lan, ping)
+    const worlds = await buildSnapshot(lan, ping('1.21.4'))
     expect(worlds).toEqual([
       {
         worldName: 'grigorii-s-world',
@@ -327,9 +372,20 @@ describe('buildSnapshot', () => {
         port: 54321,
         source: 'lan',
         version: '1.21.4',
+        players: null,
         compatible: true,
       },
     ])
+  })
+
+  it('assigns dedup suffixes independent of announcement arrival order', async () => {
+    const a = { motd: 'w', port: 2000, host: 'b-host' }
+    const b = { motd: 'w', port: 1000, host: 'a-host' }
+    const order1 = await buildSnapshot(async () => [a, b], ping('1.21.4'))
+    const order2 = await buildSnapshot(async () => [b, a], ping('1.21.4'))
+    expect(order1).toEqual(order2)
+    expect(order1.find((w) => w.host === 'a-host')!.worldName).toBe('w')
+    expect(order1.find((w) => w.host === 'b-host')!.worldName).toBe('w-2')
   })
 
   it('dedupes identical repeated LAN announcements', async () => {
@@ -338,20 +394,20 @@ describe('buildSnapshot', () => {
     expect(worlds).toHaveLength(1)
   })
 
-  it('adds localhost servers found on extra ports', async () => {
-    const ping = async (_h: string, p: number) => (p === 25565 ? { version: '1.20.1' } : null)
-    const worlds = await buildSnapshot(noLan, ping, [25565])
-    expect(worlds).toEqual([
-      {
-        worldName: 'localhost-25565',
-        displayName: 'localhost:25565',
-        host: '127.0.0.1',
-        port: 25565,
-        source: 'server',
-        version: '1.20.1',
-        compatible: true,
-      },
-    ])
+  it('uses the server MOTD as display name and surfaces players', async () => {
+    const p = ping('1.20.1', 'Epic Server', { online: 3, max: 20 })
+    const worlds = await buildSnapshot(noLan, async (h, port) => (port === 25565 ? p() : null), [25565])
+    expect(worlds[0]).toMatchObject({
+      worldName: 'epic-server',
+      displayName: 'Epic Server',
+      source: 'server',
+      players: { online: 3, max: 20 },
+    })
+  })
+
+  it('falls back to localhost:PORT when the server MOTD is empty', async () => {
+    const worlds = await buildSnapshot(noLan, ping('1.20.1'), [25565])
+    expect(worlds[0]).toMatchObject({ worldName: 'localhost-25565', displayName: 'localhost:25565' })
   })
 
   it('keeps unreachable-ping LAN worlds with null version, marked incompatible', async () => {
@@ -384,6 +440,12 @@ Expected: FAIL — module not found.
 ```ts
 import { worldSlug } from './slug.js'
 
+export type PingResult = {
+  version: string
+  motd: string
+  players: { online: number; max: number } | null
+}
+
 export type DiscoveredWorld = {
   worldName: string
   displayName: string
@@ -391,11 +453,12 @@ export type DiscoveredWorld = {
   port: number
   source: 'lan' | 'server'
   version: string | null
+  players: { online: number; max: number } | null
   compatible: boolean
 }
 
 export type LanSource = () => Promise<Array<{ motd: string; port: number; host: string }>>
-export type PingSource = (host: string, port: number) => Promise<{ version: string } | null>
+export type PingSource = (host: string, port: number) => Promise<PingResult | null>
 
 export const SUPPORTED_RANGE: [string, string] = ['1.18', '1.21']
 
@@ -414,16 +477,28 @@ export async function buildSnapshot(
   ping: PingSource,
   extraPorts: number[] = [],
 ): Promise<DiscoveredWorld[]> {
+  const seen = new Set<string>()
+  const announcements = (await lan())
+    .filter((a) => {
+      const key = `${a.host}:${a.port}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    // Deterministic slug allocation: order by (host, port), never by UDP arrival.
+    .sort((x, y) => x.host.localeCompare(y.host) || x.port - y.port)
+
+  const ports = extraPorts.filter((p) => !seen.has(`127.0.0.1:${p}`))
+  const [lanPings, serverPings] = await Promise.all([
+    Promise.all(announcements.map((a) => ping(a.host, a.port))),
+    Promise.all(ports.map((p) => ping('127.0.0.1', p))),
+  ])
+
   const taken = new Set<string>()
   const worlds: DiscoveredWorld[] = []
-  const seen = new Set<string>()
 
-  for (const a of await lan()) {
-    const key = `${a.host}:${a.port}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    const pinged = await ping(a.host, a.port)
-    const version = pinged?.version ?? null
+  announcements.forEach((a, i) => {
+    const pinged = lanPings[i] ?? null
     const worldName = worldSlug(a.motd, taken)
     taken.add(worldName)
     worlds.push({
@@ -432,27 +507,29 @@ export async function buildSnapshot(
       host: a.host,
       port: a.port,
       source: 'lan',
-      version,
-      compatible: version !== null && isVersionSupported(version),
+      version: pinged?.version ?? null,
+      players: pinged?.players ?? null,
+      compatible: pinged !== null && isVersionSupported(pinged.version),
     })
-  }
+  })
 
-  for (const port of extraPorts) {
-    if (seen.has(`127.0.0.1:${port}`)) continue
-    const pinged = await ping('127.0.0.1', port)
-    if (!pinged) continue
-    const worldName = worldSlug(`localhost-${port}`, taken)
+  ports.forEach((port, i) => {
+    const pinged = serverPings[i] ?? null
+    if (!pinged) return
+    const displayName = pinged.motd.trim() || `localhost:${port}`
+    const worldName = worldSlug(displayName, taken)
     taken.add(worldName)
     worlds.push({
       worldName,
-      displayName: `localhost:${port}`,
+      displayName,
       host: '127.0.0.1',
       port,
       source: 'server',
       version: pinged.version,
+      players: pinged.players,
       compatible: isVersionSupported(pinged.version),
     })
-  }
+  })
 
   return worlds
 }
@@ -461,13 +538,13 @@ export async function buildSnapshot(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/snapshot.test.ts`
-Expected: 6 PASS.
+Expected: 7 PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/discovery/snapshot.ts test/snapshot.test.ts
-git commit -m "Build on-demand discovery snapshot from injectable LAN + ping sources"
+git commit -m "Build deterministic discovery snapshot: sorted slugs, parallel pings, MOTD names"
 ```
 
 ---
@@ -479,41 +556,81 @@ git commit -m "Build on-demand discovery snapshot from injectable LAN + ping sou
 - Test: `test/sources.test.ts`
 
 **Interfaces:**
-- Consumes: `LanSource`, `PingSource` types (Task 4), `parseLanAnnouncement` (Task 2).
+- Consumes: `LanSource`, `PingSource`, `PingResult` types (Task 4), `parseLanAnnouncement` (Task 2).
 - Produces:
-  - `collectLanAnnouncements(windowMs?: number): ReturnType<LanSource>` — joins multicast group `224.0.2.60` on UDP port 4445, collects datagrams for `windowMs` (default 1800 ms — announcements repeat every 1500 ms), parses each with `parseLanAnnouncement`, resolves with parsed entries (host = sender address).
-  - `pingWorld: PingSource` — wraps `minecraft-protocol`'s `ping()` with a 1500 ms timeout, mapping the result to `{ version: result.version.name }`, `null` on any error.
-
-The unit test exercises the real UDP path over loopback by sending a datagram to the listener's port — no Minecraft needed. `pingWorld`'s error path is unit-tested (closed port → null); its happy path is covered by the Task 12 integration test.
+  - `collectLanAnnouncements(windowMs?: number, port?: number): ReturnType<LanSource>` — joins multicast group `224.0.2.60` on UDP `port` (default 4445), collects datagrams for `windowMs` (default 1800 ms), parses each with `parseLanAnnouncement`. The port parameter exists for test isolation — two `reuseAddr` sockets on one port split unicast datagrams non-deterministically (measured in the review), so tests must not share 4445 with each other or with a real client.
+  - `pingWorld: PingSource` — wraps `minecraft-protocol`'s `ping()` with a 1500 ms timeout, mapping the result to `{ version, motd, players }`; `null` on any error or on a response without `version.name`.
 
 - [ ] **Step 1: Write the failing test**
 
-`test/sources.test.ts`:
+`test/sources.test.ts` (the mocked ping cases cover exactly the class of breakage that survives a `minecraft-protocol` upgrade; the UDP cases use a free ephemeral port and marker-based assertions so a real Minecraft client on the network cannot redden them):
 
 ```ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import dgram from 'node:dgram'
+import type { AddressInfo } from 'node:net'
+
+vi.mock('minecraft-protocol', () => ({ default: { ping: vi.fn() } }))
+import mc from 'minecraft-protocol'
 import { collectLanAnnouncements, pingWorld } from '../src/discovery/sources.js'
 
+const mockedPing = vi.mocked((mc as unknown as { ping: Function }).ping)
+
+function freeUdpPort(): Promise<number> {
+  return new Promise((resolve) => {
+    const s = dgram.createSocket('udp4')
+    s.bind(0, () => {
+      const port = (s.address() as AddressInfo).port
+      s.close(() => resolve(port))
+    })
+  })
+}
+
 describe('collectLanAnnouncements', () => {
-  it('collects a datagram sent to the LAN port during the window', async () => {
-    const pending = collectLanAnnouncements(600)
-    // Give the listener a beat to bind before sending.
+  it('collects a datagram sent during the window and ignores garbage', async () => {
+    const port = await freeUdpPort()
+    const pending = collectLanAnnouncements(600, port)
     await new Promise((r) => setTimeout(r, 150))
     const sock = dgram.createSocket('udp4')
-    sock.send('[MOTD]loop world[/MOTD][AD]7777[/AD]', 4445, '127.0.0.1', () => sock.close())
+    sock.send('garbage', port, '127.0.0.1')
+    sock.send('[MOTD]loop world[/MOTD][AD]7777[/AD]', port, '127.0.0.1', () => sock.close())
     const anns = await pending
     expect(anns).toContainEqual({ motd: 'loop world', port: 7777, host: '127.0.0.1' })
-  })
-
-  it('resolves empty when nothing announces', async () => {
-    expect(await collectLanAnnouncements(200)).toEqual([])
+    expect(anns.filter((a) => a.motd === 'loop world')).toHaveLength(1)
   })
 })
 
 describe('pingWorld', () => {
-  it('returns null for a closed port', async () => {
-    expect(await pingWorld('127.0.0.1', 39999)).toBeNull()
+  it('maps a full response to version, motd and players', async () => {
+    mockedPing.mockImplementationOnce((_o: unknown, cb: Function) =>
+      cb(null, {
+        version: { name: '1.21.4' },
+        description: { text: 'Epic Server' },
+        players: { online: 3, max: 20 },
+      }),
+    )
+    expect(await pingWorld('h', 1)).toEqual({
+      version: '1.21.4',
+      motd: 'Epic Server',
+      players: { online: 3, max: 20 },
+    })
+  })
+
+  it('handles string descriptions and missing players', async () => {
+    mockedPing.mockImplementationOnce((_o: unknown, cb: Function) =>
+      cb(null, { version: { name: '1.20.1' }, description: 'plain motd' }),
+    )
+    expect(await pingWorld('h', 1)).toEqual({ version: '1.20.1', motd: 'plain motd', players: null })
+  })
+
+  it('returns null when version.name is missing', async () => {
+    mockedPing.mockImplementationOnce((_o: unknown, cb: Function) => cb(null, { version: {} }))
+    expect(await pingWorld('h', 1)).toBeNull()
+  })
+
+  it('returns null when ping errors', async () => {
+    mockedPing.mockImplementationOnce((_o: unknown, cb: Function) => cb(new Error('ECONNREFUSED')))
+    expect(await pingWorld('h', 1)).toBeNull()
   })
 })
 ```
@@ -531,12 +648,12 @@ Expected: FAIL — module not found.
 import dgram from 'node:dgram'
 import mc from 'minecraft-protocol'
 import { parseLanAnnouncement } from './lanParser.js'
-import type { LanSource, PingSource } from './snapshot.js'
+import type { LanSource, PingResult, PingSource } from './snapshot.js'
 
 const LAN_GROUP = '224.0.2.60'
-const LAN_PORT = 4445
+export const LAN_PORT = 4445
 
-export function collectLanAnnouncements(windowMs = 1800): ReturnType<LanSource> {
+export function collectLanAnnouncements(windowMs = 1800, port = LAN_PORT): ReturnType<LanSource> {
   return new Promise((resolve) => {
     const found: Array<{ motd: string; port: number; host: string }> = []
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true })
@@ -556,7 +673,7 @@ export function collectLanAnnouncements(windowMs = 1800): ReturnType<LanSource> 
       const parsed = parseLanAnnouncement(buf.toString('utf8'))
       if (parsed) found.push({ ...parsed, host: rinfo.address })
     })
-    sock.bind(LAN_PORT, () => {
+    sock.bind(port, () => {
       try {
         sock.addMembership(LAN_GROUP)
       } catch (e) {
@@ -568,15 +685,37 @@ export function collectLanAnnouncements(windowMs = 1800): ReturnType<LanSource> 
   })
 }
 
+type RawPing = {
+  version?: { name?: unknown }
+  description?: unknown
+  players?: { online?: unknown; max?: unknown }
+}
+
+function motdText(description: unknown): string {
+  if (typeof description === 'string') return description
+  if (description && typeof description === 'object') {
+    const d = description as { text?: unknown; extra?: unknown[] }
+    const extra = Array.isArray(d.extra) ? d.extra.map(motdText).join('') : ''
+    return `${typeof d.text === 'string' ? d.text : ''}${extra}`
+  }
+  return ''
+}
+
 export const pingWorld: PingSource = async (host, port) => {
   try {
-    const result = await new Promise<any>((resolve, reject) => {
-      mc.ping({ host, port, closeTimeout: 1500, noPongTimeout: 1500 }, (err: unknown, res: unknown) =>
+    const result = await new Promise<RawPing>((resolve, reject) => {
+      mc.ping({ host, port, closeTimeout: 1500, noPongTimeout: 1500 }, (err: unknown, res: RawPing) =>
         err ? reject(err) : resolve(res),
       )
     })
     const name = result?.version?.name
-    return typeof name === 'string' ? { version: name } : null
+    if (typeof name !== 'string') return null
+    const players =
+      typeof result.players?.online === 'number' && typeof result.players?.max === 'number'
+        ? { online: result.players.online, max: result.players.max }
+        : null
+    const mapped: PingResult = { version: name, motd: motdText(result.description), players }
+    return mapped
   } catch (e) {
     console.error(`ping ${host}:${port} failed:`, e)
     return null
@@ -587,13 +726,13 @@ export const pingWorld: PingSource = async (host, port) => {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/sources.test.ts`
-Expected: 3 PASS. (If port 4445 is busy because a local Minecraft client is running, close it and re-run — the listener binds with `reuseAddr`, so this is rare.)
+Expected: 5 PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/discovery/sources.ts test/sources.test.ts
-git commit -m "Add real discovery sources: UDP 4445 LAN listener and Server List Ping"
+git commit -m "Add discovery sources: parameterized LAN listener, fully-parsed Server List Ping"
 ```
 
 ---
@@ -606,11 +745,11 @@ git commit -m "Add real discovery sources: UDP 4445 LAN listener and Server List
 
 **Interfaces:**
 - Produces:
-  - `executeScript(code: string, scope: Record<string, unknown>, timeoutMs: number): Promise<string>` — runs `code` as the body of an async function inside a `node:vm` context whose globals are exactly `scope` plus `print`, `printJson`, `sleep`. Returns the printed lines joined with `\n`. A successful run that printed nothing returns exactly `HINT: script completed but printed nothing — use print(...)/printJson(...) to return data.`
-  - Errors: rejects with `ScriptError` carrying `message` and the original `stack`.
-  - Timeout: rejects with `ScriptError` whose message starts with `Script timed out after`.
+  - `executeScript(code: string, scope: Record<string, unknown>, timeoutMs: number): Promise<string>` — runs `code` as the body of an async function inside a `node:vm` context whose globals are exactly `scope` plus `print`, `printJson`, `sleep`. Returns the printed lines joined with `\n`, middle-truncated past `MAX_LINES = 2000` / `MAX_BYTES = 262144` (head 100 lines + `[output truncated: N lines omitted]` + tail). A successful run that printed nothing returns exactly `HINT: script completed but printed nothing — use print(...)/printJson(...) to return data.`
+  - `class ScriptError extends Error` with `scriptStack?: string`, `failingLine?: string` ("line N: <source>"), and `timedOut: boolean`. Line numbers match the user's code (the async-wrapper offset is compensated via `lineOffset`).
+  - `printJson(undefined)` (and functions/symbols) prints the string `undefined` — never a silent empty response.
 
-`waitFor` from the spec's scope is bot-specific, so it is provided in Task 8's scope object, not by the sandbox.
+Known limitations, by spec §2/§6 (do NOT try to fix in M1): the vm context is not a trust boundary, and a synchronous `while(true)` hangs the process. The async-timeout side effect (force-disconnecting the bot) is the caller's job — Task 8.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -631,6 +770,11 @@ describe('executeScript', () => {
     expect(out).toBe('{\n  "x": 1\n}')
   })
 
+  it('printJson(undefined) prints "undefined", not an empty response', async () => {
+    const out = await executeScript('printJson(undefined)', {}, 1000)
+    expect(out).toBe('undefined')
+  })
+
   it('supports top-level await and scope values', async () => {
     const out = await executeScript('await sleep(10); print(magic + 1)', { magic: 41 }, 1000)
     expect(out).toBe('42')
@@ -641,17 +785,38 @@ describe('executeScript', () => {
     expect(out).toContain('HINT: script completed but printed nothing')
   })
 
-  it('rejects with ScriptError carrying the thrown message', async () => {
-    await expect(executeScript('throw new Error("boom")', {}, 1000)).rejects.toThrowError(/boom/)
-    await expect(executeScript('throw new Error("boom")', {}, 1000)).rejects.toBeInstanceOf(ScriptError)
+  it('truncates huge output from the middle, keeping the tail', async () => {
+    const out = await executeScript('for (let i = 0; i < 5000; i++) print("line " + i)', {}, 5000)
+    const lines = out.split('\n')
+    expect(lines.length).toBeLessThan(2100)
+    expect(out).toContain('[output truncated:')
+    expect(lines[lines.length - 1]).toBe('line 4999')
+    expect(lines[0]).toBe('line 0')
+  })
+
+  it('rejects with ScriptError carrying message and failing line', async () => {
+    const code = 'print("ok")\nthrow new Error("boom")'
+    const err = await executeScript(code, {}, 1000).then(
+      () => null,
+      (e) => e as ScriptError,
+    )
+    expect(err).toBeInstanceOf(ScriptError)
+    expect(err!.message).toContain('boom')
+    expect(err!.failingLine).toBe('line 2: throw new Error("boom")')
+    expect(err!.timedOut).toBe(false)
   })
 
   it('reports syntax errors without crashing the process', async () => {
     await expect(executeScript('const const', {}, 1000)).rejects.toBeInstanceOf(ScriptError)
   })
 
-  it('times out hung scripts', async () => {
-    await expect(executeScript('await sleep(5000)', {}, 100)).rejects.toThrowError(/timed out after/)
+  it('times out hung scripts and marks timedOut', async () => {
+    const err = await executeScript('await sleep(5000)', {}, 100).then(
+      () => null,
+      (e) => e as ScriptError,
+    )
+    expect(err!.message).toMatch(/timed out after/)
+    expect(err!.timedOut).toBe(true)
   })
 })
 ```
@@ -669,7 +834,12 @@ Expected: FAIL — module not found.
 import vm from 'node:vm'
 
 export class ScriptError extends Error {
-  constructor(message: string, public readonly scriptStack?: string) {
+  constructor(
+    message: string,
+    public readonly scriptStack?: string,
+    public readonly failingLine?: string,
+    public readonly timedOut: boolean = false,
+  ) {
     super(message)
     this.name = 'ScriptError'
   }
@@ -678,16 +848,51 @@ export class ScriptError extends Error {
 export const NO_PRINT_HINT =
   'HINT: script completed but printed nothing — use print(...)/printJson(...) to return data.'
 
+const MAX_LINES = 2000
+const MAX_BYTES = 262144
+const HARD_LINE_CAP = 20000
+
+function extractFailingLine(stack: string | undefined, srcLines: string[]): string | undefined {
+  const m = /craft-script\.js:(\d+)/.exec(stack ?? '')
+  if (!m) return undefined
+  const n = Number(m[1])
+  const src = srcLines[n - 1]
+  return src !== undefined ? `line ${n}: ${src.trim()}` : undefined
+}
+
+function renderOutput(lines: string[], skipped: number): string {
+  let all = skipped > 0 ? [...lines, `[output truncated: ${skipped} further lines dropped]`] : lines
+  if (all.length > MAX_LINES) {
+    const omitted = all.length - 100 - (MAX_LINES - 101)
+    all = [...all.slice(0, 100), `[output truncated: ${omitted} lines omitted]`, ...all.slice(-(MAX_LINES - 101))]
+  }
+  let text = all.join('\n')
+  if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) {
+    // Keep the tail — verification output lives at the end.
+    text = `[output truncated to the last ${MAX_BYTES} bytes]\n` + text.slice(-MAX_BYTES)
+  }
+  return text
+}
+
 export async function executeScript(
   code: string,
   scope: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<string> {
   const lines: string[] = []
+  let skipped = 0
+  const push = (line: string) => {
+    if (lines.length < HARD_LINE_CAP) lines.push(line)
+    else skipped++
+  }
+  const srcLines = code.split('\n')
   const context = vm.createContext({
     ...scope,
-    print: (...args: unknown[]) => lines.push(args.map(String).join(' ')),
-    printJson: (value: unknown) => lines.push(JSON.stringify(value, null, 2)),
+    print: (...args: unknown[]) => push(args.map(String).join(' ')),
+    printJson: (value: unknown) => {
+      const s = JSON.stringify(value, null, 2)
+      push(s === undefined ? 'undefined' : s)
+    },
     sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
   })
 
@@ -695,17 +900,18 @@ export async function executeScript(
   try {
     fn = vm.runInContext(`(async () => {\n${code}\n})`, context, {
       filename: 'craft-script.js',
+      lineOffset: -1, // reported numbers match the user's code, not the wrapper
       timeout: timeoutMs,
     }) as () => Promise<unknown>
   } catch (e) {
     const err = e as Error
-    throw new ScriptError(`Script failed to compile: ${err.message}`, err.stack)
+    throw new ScriptError(`Script failed to compile: ${err.message}`, err.stack, extractFailingLine(err.stack, srcLines))
   }
 
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new ScriptError(`Script timed out after ${timeoutMs} ms`)),
+      () => reject(new ScriptError(`Script timed out after ${timeoutMs} ms`, undefined, undefined, true)),
       timeoutMs,
     )
   })
@@ -714,25 +920,27 @@ export async function executeScript(
   } catch (e) {
     if (e instanceof ScriptError) throw e
     const err = e as Error
-    throw new ScriptError(`Script threw: ${err.message}`, err.stack)
+    throw new ScriptError(`Script threw: ${err.message}`, err.stack, extractFailingLine(err.stack, srcLines))
   } finally {
     clearTimeout(timer)
   }
 
-  return lines.length > 0 ? lines.join('\n') : NO_PRINT_HINT
+  return lines.length > 0 || skipped > 0 ? renderOutput(lines, skipped) : NO_PRINT_HINT
 }
 ```
+
+Note on `lineOffset: -1`: the option shifts *reported* positions only. Confirm the failing-line test passes against a real stack on the pinned Node version; if the runtime you're on anchors stack lines differently, adjust the offset arithmetic in `extractFailingLine` (not the wrapper) until `line 2: throw new Error("boom")` holds.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/sandbox.test.ts`
-Expected: 7 PASS.
+Expected: 9 PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/runtime/sandbox.ts test/sandbox.test.ts
-git commit -m "Add vm sandbox for craft_execute_code: print capture, timeout, HINT contract"
+git commit -m "Add vm sandbox: print capture, output caps, aligned error lines, timeout marking"
 ```
 
 ---
@@ -746,12 +954,13 @@ git commit -m "Add vm sandbox for craft_execute_code: print capture, timeout, HI
 **Interfaces:**
 - Consumes: `DiscoveredWorld` (Task 4).
 - Produces:
-  - `type BotFactory = (opts: { host: string; port: number; username: string; auth: 'offline' }) => BotLike` — injectable; production wires mineflayer here (Task 8).
+  - `type BotFactory = (opts: { host: string; port: number; username: string; auth: 'offline' }) => BotLike`
   - `type BotLike = NodeJS.EventEmitter & { entity?: { position: { x: number; y: number; z: number } }; health?: number; food?: number; end: (reason?: string) => void }`
   - `class BotManager`:
-    - `join(world: DiscoveredWorld, username: string): void` — idempotent per `worldName`; registers state `joining`, flips to `ready` on `'spawn'`, to `error` (with message) on `'error'`/`'kicked'`/`'end'`.
-    - `list(): Array<{ worldName: string; username: string; state: 'joining' | 'ready' | 'error'; error?: string; position?: { x: number; y: number; z: number }; health?: number; food?: number }>`
-    - `get(worldName: string): { bot: BotLike; state: string } | undefined`
+    - `join(world: DiscoveredWorld, username: string): void` — idempotent per `worldName` while live; a previous errored bot is ended AND has its listeners detached before the replacement is created (a late `end` from the old emitter must not poison the new entry); joins that neither spawn nor fail flip to `error` after `JOIN_TIMEOUT_MS = 60_000`.
+    - `list(): Array<{ worldName: string; username: string; state: 'joining' | 'ready' | 'error'; error?: string; position?: {...}; health?: number; food?: number }>`
+    - `get(worldName: string): { bot: BotLike; state: 'joining' | 'ready' | 'error' } | undefined`
+    - `tryLock(worldName: string): (() => void) | null` — per-world execution lock; returns a release function or `null` when the bot is already running a script (spec §5 serialization).
     - `endAll(): void`
 
 - [ ] **Step 1: Write the failing test**
@@ -759,7 +968,7 @@ git commit -m "Add vm sandbox for craft_execute_code: print capture, timeout, HI
 `test/botManager.test.ts`:
 
 ```ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { BotManager, type BotLike } from '../src/runtime/botManager.js'
 import type { DiscoveredWorld } from '../src/discovery/snapshot.js'
@@ -772,6 +981,7 @@ function world(name: string): DiscoveredWorld {
     port: 1,
     source: 'lan',
     version: '1.21.4',
+    players: null,
     compatible: true,
   }
 }
@@ -785,6 +995,8 @@ class FakeBot extends EventEmitter implements BotLike {
     this.ended = true
   }
 }
+
+afterEach(() => vi.useRealTimers())
 
 describe('BotManager', () => {
   it('tracks joining → ready on spawn', () => {
@@ -809,6 +1021,25 @@ describe('BotManager', () => {
     expect(mgr.list()[0]).toMatchObject({ state: 'error', error: 'kicked: You are banned' })
   })
 
+  it('flips to error when a join never spawns within the timeout', () => {
+    vi.useFakeTimers()
+    const mgr = new BotManager(() => new FakeBot())
+    mgr.join(world('w'), 'devrig')
+    vi.advanceTimersByTime(60_001)
+    expect(mgr.list()[0]).toMatchObject({ state: 'error' })
+    expect(mgr.list()[0]!.error).toContain('join timed out')
+  })
+
+  it('spawn cancels the join timer', () => {
+    vi.useFakeTimers()
+    const bot = new FakeBot()
+    const mgr = new BotManager(() => bot)
+    mgr.join(world('w'), 'devrig')
+    bot.emit('spawn')
+    vi.advanceTimersByTime(120_000)
+    expect(mgr.list()[0]).toMatchObject({ state: 'ready' })
+  })
+
   it('is idempotent per world while a live bot exists', () => {
     let created = 0
     const mgr = new BotManager(() => {
@@ -820,11 +1051,9 @@ describe('BotManager', () => {
     expect(created).toBe(1)
   })
 
-  it('rejoining after error creates a fresh bot', () => {
-    let created = 0
+  it('rejoin after error ends the old bot and detaches its listeners', () => {
     const bots: FakeBot[] = []
     const mgr = new BotManager(() => {
-      created++
       const b = new FakeBot()
       bots.push(b)
       return b
@@ -832,7 +1061,23 @@ describe('BotManager', () => {
     mgr.join(world('w'), 'devrig')
     bots[0]!.emit('end', 'socketClosed')
     mgr.join(world('w'), 'devrig')
-    expect(created).toBe(2)
+    expect(bots).toHaveLength(2)
+    expect(bots[0]!.ended).toBe(true)
+    bots[1]!.emit('spawn')
+    // A late event from the OLD emitter must not poison the new entry:
+    bots[0]!.emit('end', 'late straggler')
+    expect(mgr.list()[0]).toMatchObject({ state: 'ready' })
+  })
+
+  it('tryLock serializes executions per world', () => {
+    const bot = new FakeBot()
+    const mgr = new BotManager(() => bot)
+    mgr.join(world('w'), 'devrig')
+    const release = mgr.tryLock('w')
+    expect(release).not.toBeNull()
+    expect(mgr.tryLock('w')).toBeNull()
+    release!()
+    expect(mgr.tryLock('w')).not.toBeNull()
   })
 
   it('endAll ends every bot', () => {
@@ -874,12 +1119,16 @@ export type BotFactory = (opts: {
 
 type BotState = 'joining' | 'ready' | 'error'
 
+export const JOIN_TIMEOUT_MS = 60_000
+
 type Entry = {
   world: DiscoveredWorld
   username: string
   bot: BotLike
   state: BotState
   error?: string
+  joinTimer?: NodeJS.Timeout
+  locked: boolean
 }
 
 export class BotManager {
@@ -890,24 +1139,41 @@ export class BotManager {
   join(world: DiscoveredWorld, username: string): void {
     const existing = this.entries.get(world.worldName)
     if (existing && existing.state !== 'error') return
+    if (existing) this.dispose(existing)
 
     const bot = this.factory({ host: world.host, port: world.port, username, auth: 'offline' })
-    const entry: Entry = { world, username, bot, state: 'joining' }
+    const entry: Entry = { world, username, bot, state: 'joining', locked: false }
     this.entries.set(world.worldName, entry)
 
     const fail = (error: string) => {
       entry.state = 'error'
       entry.error = error
+      clearTimeout(entry.joinTimer)
       console.error(`bot ${world.worldName}: ${error}`)
     }
+    entry.joinTimer = setTimeout(() => {
+      if (entry.state === 'joining')
+        fail(`join timed out after ${JOIN_TIMEOUT_MS / 1000}s — is the world still open to LAN?`)
+    }, JOIN_TIMEOUT_MS)
     bot.on('spawn', () => {
       entry.state = 'ready'
+      clearTimeout(entry.joinTimer)
     })
     bot.on('error', (e: unknown) => fail(`error: ${String(e)}`))
     bot.on('kicked', (reason: unknown) => fail(`kicked: ${String(reason)}`))
     bot.on('end', (reason: unknown) => {
       if (entry.state !== 'error') fail(`connection ended: ${String(reason)}`)
     })
+  }
+
+  private dispose(entry: Entry): void {
+    clearTimeout(entry.joinTimer)
+    entry.bot.removeAllListeners()
+    try {
+      entry.bot.end('devrig-craft: replaced by rejoin')
+    } catch (e) {
+      console.error('bot end failed:', e)
+    }
   }
 
   list() {
@@ -927,14 +1193,17 @@ export class BotManager {
     return e ? { bot: e.bot, state: e.state } : undefined
   }
 
-  endAll(): void {
-    for (const e of this.entries.values()) {
-      try {
-        e.bot.end('devrig-craft shutdown')
-      } catch (err) {
-        console.error('bot end failed:', err)
-      }
+  tryLock(worldName: string): (() => void) | null {
+    const e = this.entries.get(worldName)
+    if (!e || e.locked) return null
+    e.locked = true
+    return () => {
+      e.locked = false
     }
+  }
+
+  endAll(): void {
+    for (const e of this.entries.values()) this.dispose(e)
     this.entries.clear()
   }
 }
@@ -943,13 +1212,13 @@ export class BotManager {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/botManager.test.ts`
-Expected: 5 PASS.
+Expected: 8 PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/runtime/botManager.ts test/botManager.test.ts
-git commit -m "Track bot lifecycle per world: joining/ready/error with injectable factory"
+git commit -m "Track bot lifecycle: join timeout, clean rejoin, per-world lock, endAll"
 ```
 
 ---
@@ -957,32 +1226,57 @@ git commit -m "Track bot lifecycle per world: joining/ready/error with injectabl
 ### Task 8: MCP server with all 8 tools
 
 **Files:**
-- Create: `src/server.ts`, `src/runtime/mineflayerFactory.ts`
-- Test: `test/server.test.ts`
+- Create: `src/server.ts`, `src/wire.ts`, `src/runtime/mineflayerFactory.ts`
+- Test: `test/server.test.ts`, `test/wire.test.ts`
 
 **Interfaces:**
-- Consumes: `buildSnapshot`/`DiscoveredWorld` (Task 4), real sources (Task 5), `executeScript`/`ScriptError` (Task 6), `BotManager`/`BotFactory` (Task 7), recipe loader placeholder (full corpus in Task 9).
+- Consumes: everything from Tasks 4–7.
 - Produces:
-  - `createCraftServer(deps: { lan: LanSource; ping: PingSource; botFactory: BotFactory; recipesDir?: string; extraPorts?: number[] }): McpServer` — registers exactly the 8 tools; testable over `InMemoryTransport`.
-  - `src/runtime/mineflayerFactory.ts` exports `mineflayerFactory: BotFactory` that calls `mineflayer.createBot(...)` and loads `mineflayer-pathfinder`; it also attaches `bot.craftScope()` returning `{ bot, Vec3, mcData, waitFor }` for the sandbox.
-  - Tool behaviors (each responds `{ content: [{ type: 'text', text }] }`):
-    - `craft_list_worlds` (no params): JSON array of the current snapshot (calls `buildSnapshot` fresh — stateless).
-    - `craft_list_bots` (no params): JSON of `botManager.list()`.
-    - `craft_join_world` (`world_name`, optional `username` default `devrig`): resolves the world from a fresh snapshot; unknown name → error text listing known `world_name`s; incompatible version → error text with the supported range; otherwise `botManager.join(...)` and returns "joining — poll craft_list_bots until state=ready".
-    - `craft_execute_code` (`world_name`, `code`, `task_id`, `reason`, optional `timeout` seconds default 120): requires a `ready` bot (else error text telling the caller to join/poll); runs `executeScript(code, scope, timeout*1000)`; on `ScriptError` returns `isError: true` with message + stack.
-    - `craft_fetch_resource` (`uri`): serves the recipe markdown (Task 9 fills the corpus; until then, unknown URI → error text listing known URIs).
-    - `craft_chat` (`world_name`, `text`, `task_id`, `reason`): `bot.chat(text)`; description carries the "HEAVY — prefer craft_execute_code with bot.chat(...)" steering.
-    - `craft_take_screenshot` (`world_name`, `task_id`, `reason`): tries `import('prismarine-viewer')`; on any failure returns error text "screenshot unavailable on this host (headless-gl) — verify via bot.blockAt sweeps instead". Success path renders one frame to a temp PNG and returns its path. Best-effort by spec §12.
-    - `craft_execute_feedback` (`task_id`, `execution_id`, `success_rating` 0..1, `explanation`): appends one JSON line to `stderr` log; returns "recorded".
-- ALL logging goes to stderr — stdout is the JSON-RPC channel (never `console.log`).
+  - `src/wire.ts`: `toWire(value: unknown): unknown` — recursively converts object keys camelCase→snake_case; applied to every JSON tool response. camelCase never crosses the MCP boundary.
+  - `createCraftServer(deps: { lan: LanSource; ping: PingSource; botFactory: BotFactory; recipesDir?: string; extraPorts?: number[]; feedbackPath?: string }): { server: McpServer; endAll: () => void }` — registers exactly the 8 tools; `endAll` is for the CLI's signal handlers (Task 10).
+  - `src/runtime/mineflayerFactory.ts` exports `mineflayerFactory: BotFactory`: creates the mineflayer bot, loads pathfinder, and attaches `craftScope()` returning `{ bot, Vec3, mcData, goals, Movements, Item, waitFor }` — `Item` is `prismarine-item` bound to `bot.version`, `goals`/`Movements` come from `mineflayer-pathfinder` (spec §6: native entry-point classes, injected — no `require` inside scripts).
+  - Tool contracts (each responds `{ content: [{ type: 'text', text }] }`; JSON payloads pass through `toWire`):
+    - `craft_list_worlds` (no params): fresh snapshot as JSON.
+    - `craft_list_bots` (no params): `botManager.list()` as JSON.
+    - `craft_join_world` (`world_name`, optional `username` default `devrig`): unknown name → error listing known names; incompatible → error with supported range; success echoes the resolved `host:port` (spec §4 stability visibility).
+    - `craft_execute_code` (`world_name`, `code` ≤100 000 chars, `task_id`, `reason`, optional `timeout` int 1–600 default 120): requires a `ready` bot; acquires the per-world lock or returns `bot busy: another script is running in this world — retry after it finishes`; generates `execution_id` (`randomUUID()`), logs `{execution_id, task_id, reason, world_name, durationMs, ok}` as one stderr line, and returns `execution_id: <uuid>` as the first response line. On `ScriptError` with `timedOut`: force `bot.end()` (stops world mutation) and tell the caller to rejoin. On other `ScriptError`: message + failing line + stack, `isError: true`.
+    - `craft_fetch_resource` (`uri`): serves `resources/recipes/<prompt|skill>/<name>.md`; unknown → error listing known URIs.
+    - `craft_chat` (`world_name`, `text`, `task_id`, `reason`): takes the same per-world lock (busy → same error); steering description.
+    - `craft_take_screenshot` (`world_name`, `task_id`, `reason`): **M1 = error branch only** — always returns `isError: true` with `screenshot not available in M1 — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway`. No prismarine-viewer import in M1.
+    - `craft_execute_feedback` (`task_id`, `execution_id`, `success_rating` 0..1, `explanation`): rejects an `execution_id` that this process never issued; appends one JSONL line to `feedbackPath` (default `os.tmpdir()/devrig-craft-feedback.jsonl`) and returns `recorded to <path>`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing wire test**
+
+`test/wire.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { toWire } from '../src/wire.js'
+
+describe('toWire', () => {
+  it('snake_cases keys recursively, leaving values and arrays intact', () => {
+    expect(
+      toWire({ worldName: 'w', players: { onlineCount: 1 }, list: [{ displayName: 'x' }] }),
+    ).toEqual({ world_name: 'w', players: { online_count: 1 }, list: [{ display_name: 'x' }] })
+  })
+
+  it('passes primitives through', () => {
+    expect(toWire('a')).toBe('a')
+    expect(toWire(null)).toBeNull()
+  })
+})
+```
+
+- [ ] **Step 2: Write the failing server test**
 
 `test/server.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createCraftServer } from '../src/server.js'
@@ -993,13 +1287,16 @@ class FakeBot extends EventEmitter implements BotLike {
   health = 20
   food = 20
   lastChat = ''
+  ended = false
   chat(text: string) {
     this.lastChat = text
   }
   blockAt() {
     return { name: 'stone' }
   }
-  end() {}
+  end() {
+    this.ended = true
+  }
 }
 
 const EXPECTED_TOOLS = [
@@ -1013,24 +1310,39 @@ const EXPECTED_TOOLS = [
   'craft_execute_feedback',
 ]
 
+const text = (r: any): string => r.content[0].text as string
+
 describe('craft MCP server', () => {
   let client: Client
   let bot: FakeBot
+  let feedbackPath: string
 
   beforeEach(async () => {
     bot = new FakeBot()
-    const server = createCraftServer({
+    feedbackPath = join(tmpdir(), `craft-feedback-test-${Date.now()}-${Math.random()}.jsonl`)
+    const { server } = createCraftServer({
       lan: async () => [{ motd: 'test world', port: 7777, host: '127.0.0.1' }],
-      ping: async () => ({ version: '1.21.4' }),
+      ping: async () => ({ version: '1.21.4', motd: '', players: null }),
       botFactory: () => bot,
+      recipesDir: 'resources/recipes',
+      extraPorts: [],
+      feedbackPath,
     })
     const [clientT, serverT] = InMemoryTransport.createLinkedPair()
     client = new Client({ name: 'test', version: '0.0.0' })
     await Promise.all([server.connect(serverT), client.connect(clientT)])
   })
 
-  function text(result: any): string {
-    return result.content[0].text as string
+  async function joinAndSpawn(): Promise<void> {
+    await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
+    bot.emit('spawn')
+  }
+
+  async function exec(code: string, timeout?: number) {
+    return client.callTool({
+      name: 'craft_execute_code',
+      arguments: { world_name: 'test-world', code, task_id: 't', reason: 'r', ...(timeout ? { timeout } : {}) },
+    })
   }
 
   it('registers exactly the 8 mirrored tools', async () => {
@@ -1038,35 +1350,25 @@ describe('craft MCP server', () => {
     expect(tools).toEqual([...EXPECTED_TOOLS].sort())
   })
 
-  it('lists discovered worlds with routing keys', async () => {
-    const res = await client.callTool({ name: 'craft_list_worlds', arguments: {} })
-    const worlds = JSON.parse(text(res))
-    expect(worlds[0]).toMatchObject({ worldName: 'test-world', version: '1.21.4', compatible: true })
+  it('lists worlds in snake_case with routing keys and no camelCase leaks', async () => {
+    const raw = text(await client.callTool({ name: 'craft_list_worlds', arguments: {} }))
+    const worlds = JSON.parse(raw)
+    expect(worlds[0]).toMatchObject({ world_name: 'test-world', version: '1.21.4', compatible: true })
+    expect(raw).not.toMatch(/"[a-z0-9]+[A-Z]\w*"\s*:/)
   })
 
-  it('join → poll → execute_code round trip', async () => {
-    await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
+  it('join echoes host:port, then execute_code returns execution_id + output', async () => {
+    const joinRes = await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
+    expect(text(joinRes)).toContain('127.0.0.1:7777')
     bot.emit('spawn')
-    const bots = JSON.parse(text(await client.callTool({ name: 'craft_list_bots', arguments: {} })))
-    expect(bots[0]).toMatchObject({ worldName: 'test-world', state: 'ready' })
-
-    const res = await client.callTool({
-      name: 'craft_execute_code',
-      arguments: {
-        world_name: 'test-world',
-        code: 'print(bot.blockAt().name)',
-        task_id: 't1',
-        reason: 'test',
-      },
-    })
-    expect(text(res)).toBe('stone')
+    const res = await exec('print(bot.blockAt().name)')
+    const [first, ...rest] = text(res).split('\n')
+    expect(first).toMatch(/^execution_id: [0-9a-f-]{36}$/)
+    expect(rest.join('\n')).toBe('stone')
   })
 
   it('execute_code against a non-ready bot returns guidance, not a crash', async () => {
-    const res = await client.callTool({
-      name: 'craft_execute_code',
-      arguments: { world_name: 'test-world', code: 'print(1)', task_id: 't', reason: 'r' },
-    })
+    const res = await exec('print(1)')
     expect(res.isError).toBe(true)
     expect(text(res)).toContain('craft_join_world')
   })
@@ -1077,44 +1379,112 @@ describe('craft MCP server', () => {
     expect(text(res)).toContain('test-world')
   })
 
-  it('script errors surface as isError with the message', async () => {
-    await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
-    bot.emit('spawn')
-    const res = await client.callTool({
-      name: 'craft_execute_code',
-      arguments: { world_name: 'test-world', code: 'throw new Error("boom")', task_id: 't', reason: 'r' },
-    })
-    expect(res.isError).toBe(true)
-    expect(text(res)).toContain('boom')
+  it('rejects oversized code and out-of-range timeouts at the schema', async () => {
+    await joinAndSpawn()
+    await expect(exec('x'.repeat(100_001))).rejects.toThrow()
+    await expect(exec('print(1)', 601)).rejects.toThrow()
   })
 
-  it('craft_chat relays through the bot', async () => {
-    await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
-    bot.emit('spawn')
+  it('serializes executions: concurrent call gets an explicit busy error', async () => {
+    await joinAndSpawn()
+    const slow = exec('await sleep(300); print("slow done")')
+    await new Promise((r) => setTimeout(r, 50))
+    const busy = await exec('print("fast")')
+    expect(busy.isError).toBe(true)
+    expect(text(busy)).toContain('bot busy')
+    expect(text(await slow)).toContain('slow done')
+  })
+
+  it('script errors surface with the failing line', async () => {
+    await joinAndSpawn()
+    const res = await exec('throw new Error("boom")')
+    expect(res.isError).toBe(true)
+    expect(text(res)).toContain('boom')
+    expect(text(res)).toContain('line 1:')
+  })
+
+  it('a timed-out script disconnects the bot and says to rejoin', async () => {
+    await joinAndSpawn()
+    const res = await exec('await sleep(60_000)', 1)
+    expect(res.isError).toBe(true)
+    expect(text(res)).toContain('rejoin')
+    expect(bot.ended).toBe(true)
+  })
+
+  it('feedback rejects unknown execution ids and records known ones', async () => {
+    await joinAndSpawn()
+    const bad = await client.callTool({
+      name: 'craft_execute_feedback',
+      arguments: { task_id: 't', execution_id: 'never-issued', success_rating: 1, explanation: 'x' },
+    })
+    expect(bad.isError).toBe(true)
+
+    const res = await exec('print(1)')
+    const id = text(res).split('\n')[0]!.replace('execution_id: ', '')
+    const good = await client.callTool({
+      name: 'craft_execute_feedback',
+      arguments: { task_id: 't', execution_id: id, success_rating: 0.9, explanation: 'built it' },
+    })
+    expect(text(good)).toContain(feedbackPath)
+    const logged = JSON.parse((await readFile(feedbackPath, 'utf8')).trim())
+    expect(logged).toMatchObject({ execution_id: id, success_rating: 0.9 })
+  })
+
+  it('craft_chat relays through the bot and respects the lock', async () => {
+    await joinAndSpawn()
     await client.callTool({
       name: 'craft_chat',
       arguments: { world_name: 'test-world', text: 'hello', task_id: 't', reason: 'r' },
     })
     expect(bot.lastChat).toBe('hello')
   })
+
+  it('screenshot returns the M1 guidance error', async () => {
+    await joinAndSpawn()
+    const res = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r' },
+    })
+    expect(res.isError).toBe(true)
+    expect(text(res)).toContain('blockAt')
+  })
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run tests to verify they fail**
 
-Run: `npx vitest run test/server.test.ts`
-Expected: FAIL — module not found.
+Run: `npx vitest run test/wire.test.ts test/server.test.ts`
+Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Write the implementation**
 
-`src/server.ts` (tool descriptions abbreviated here to the load-bearing sentences — write them in full steroid house style in code):
+`src/wire.ts`:
+
+```ts
+const snake = (k: string) => k.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())
+
+export function toWire(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toWire)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [snake(k), toWire(v)]))
+  }
+  return value
+}
+```
+
+`src/server.ts`:
 
 ```ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { buildSnapshot, type DiscoveredWorld, type LanSource, type PingSource, SUPPORTED_RANGE } from './discovery/snapshot.js'
+import { randomUUID } from 'node:crypto'
+import { appendFile, readFile, readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildSnapshot, SUPPORTED_RANGE, type LanSource, type PingSource } from './discovery/snapshot.js'
 import { BotManager, type BotFactory, type BotLike } from './runtime/botManager.js'
 import { executeScript, ScriptError } from './runtime/sandbox.js'
+import { toWire } from './wire.js'
 import { SERVER_NAME, SERVER_VERSION } from './version.js'
 
 export type CraftServerDeps = {
@@ -1123,14 +1493,18 @@ export type CraftServerDeps = {
   botFactory: BotFactory
   recipesDir?: string
   extraPorts?: number[]
+  feedbackPath?: string
 }
 
 const ok = (text: string) => ({ content: [{ type: 'text' as const, text }] })
 const err = (text: string) => ({ content: [{ type: 'text' as const, text }], isError: true })
+const json = (value: unknown) => ok(JSON.stringify(toWire(value), null, 2))
 
-export function createCraftServer(deps: CraftServerDeps): McpServer {
+export function createCraftServer(deps: CraftServerDeps): { server: McpServer; endAll: () => void } {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })
   const bots = new BotManager(deps.botFactory)
+  const issuedExecutions = new Set<string>()
+  const feedbackPath = deps.feedbackPath ?? join(tmpdir(), 'devrig-craft-feedback.jsonl')
   const snapshot = () => buildSnapshot(deps.lan, deps.ping, deps.extraPorts ?? [25565])
 
   server.registerTool(
@@ -1139,10 +1513,11 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
       description:
         'List running Minecraft worlds this machine can join: LAN-opened singleplayer worlds ' +
         '(any launcher, incl. Prism) and local offline-mode servers. Returns world_name — the ' +
-        'routing key for every other tool. Rebuilt fresh on every call.',
+        'routing key for every other tool — plus version, players and a compat flag. Rebuilt ' +
+        'fresh on every call.',
       inputSchema: {},
     },
-    async () => ok(JSON.stringify(await snapshot(), null, 2)),
+    async () => json(await snapshot()),
   )
 
   server.registerTool(
@@ -1153,7 +1528,7 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
         'Poll this after craft_join_world until state=ready.',
       inputSchema: {},
     },
-    async () => ok(JSON.stringify(bots.list(), null, 2)),
+    async () => json(bots.list()),
   )
 
   server.registerTool(
@@ -1161,10 +1536,11 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
     {
       description:
         'ASYNC: start joining a discovered world as a bot. Returns immediately; poll ' +
-        'craft_list_bots until state=ready before calling craft_execute_code.',
+        'craft_list_bots until state=ready before calling craft_execute_code. Joins time out ' +
+        'after 60s into an error state.',
       inputSchema: {
-        world_name: z.string().describe('routing key from craft_list_worlds'),
-        username: z.string().optional().describe('bot username, default "devrig"'),
+        world_name: z.string().max(256).describe('routing key from craft_list_worlds'),
+        username: z.string().max(16).optional().describe('bot username, default "devrig"'),
       },
     },
     async ({ world_name, username }) => {
@@ -1179,7 +1555,9 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
           `World "${world_name}" runs ${world.version ?? 'an unknown version'}; supported range is ${SUPPORTED_RANGE[0]}–${SUPPORTED_RANGE[1]}.`,
         )
       bots.join(world, username ?? 'devrig')
-      return ok(`Joining "${world_name}" as ${username ?? 'devrig'} — poll craft_list_bots until state=ready.`)
+      return ok(
+        `Joining "${world_name}" (${world.host}:${world.port}) as ${username ?? 'devrig'} — poll craft_list_bots until state=ready.`,
+      )
     },
   )
 
@@ -1187,30 +1565,66 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
     'craft_execute_code',
     {
       description:
-        'THE main tool. Execute JavaScript with the full mineflayer API in scope: bot (with ' +
-        'pathfinder loaded), Vec3, mcData, print/printJson/sleep/waitFor. The response contains ' +
-        'ONLY what the script prints. Read mcp-craft://prompt/skill first for recipes. Verify ' +
+        'THE main tool. Execute JavaScript with the full mineflayer API in scope: bot (pathfinder ' +
+        'loaded), Vec3, mcData, goals, Movements, Item, print/printJson/sleep/waitFor. No require, ' +
+        'no import — everything you need is already in scope. The response is an execution_id line, ' +
+        'then ONLY what the script prints. Read mcp-craft://prompt/skill first for recipes. Verify ' +
         'builds via bot.blockAt sweeps, not screenshots.',
       inputSchema: {
-        world_name: z.string(),
-        code: z.string().describe('body of an async function; top-level await works'),
-        task_id: z.string().describe('reuse across related calls to group audit logs'),
-        reason: z.string().describe('full task description of intent and expected outcome'),
-        timeout: z.number().optional().describe('seconds, default 120'),
+        world_name: z.string().max(256),
+        code: z.string().max(100_000).describe('body of an async function; top-level await works'),
+        task_id: z.string().max(256).describe('reuse across related calls to group audit logs'),
+        reason: z.string().max(4096).describe('full task description of intent and expected outcome'),
+        timeout: z.number().int().min(1).max(600).optional().describe('seconds, default 120'),
       },
     },
-    async ({ world_name, code, timeout }) => {
+    async ({ world_name, code, task_id, reason, timeout }) => {
       const entry = bots.get(world_name)
       if (!entry || entry.state !== 'ready')
         return err(
           `No ready bot in "${world_name}" (state: ${entry?.state ?? 'none'}). Call craft_join_world, then poll craft_list_bots until state=ready.`,
         )
+      const release = bots.tryLock(world_name)
+      if (!release) return err('bot busy: another script is running in this world — retry after it finishes')
+
+      const executionId = randomUUID()
+      issuedExecutions.add(executionId)
+      const started = Date.now()
+      const audit = (okFlag: boolean) =>
+        console.error(
+          JSON.stringify({
+            execution_id: executionId,
+            task_id,
+            reason,
+            world_name,
+            duration_ms: Date.now() - started,
+            ok: okFlag,
+          }),
+        )
       try {
         const scope = craftScope(entry.bot)
-        return ok(await executeScript(code, scope, (timeout ?? 120) * 1000))
+        const output = await executeScript(code, scope, (timeout ?? 120) * 1000)
+        audit(true)
+        return ok(`execution_id: ${executionId}\n${output}`)
       } catch (e) {
-        if (e instanceof ScriptError) return err(`${e.message}\n${e.scriptStack ?? ''}`.trim())
+        audit(false)
+        if (e instanceof ScriptError && e.timedOut) {
+          try {
+            entry.bot.end('devrig-craft: script timeout')
+          } catch (endErr) {
+            console.error('bot end after timeout failed:', endErr)
+          }
+          return err(
+            `execution_id: ${executionId}\n${e.message}\nBot disconnected to stop the runaway script — craft_join_world to rejoin.`,
+          )
+        }
+        if (e instanceof ScriptError)
+          return err(
+            `execution_id: ${executionId}\n${[e.message, e.failingLine, e.scriptStack].filter(Boolean).join('\n')}`,
+          )
         throw e
+      } finally {
+        release()
       }
     },
   )
@@ -1219,13 +1633,15 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
     'craft_fetch_resource',
     {
       description:
-        'Fetch an mcp-craft:// recipe article — copy-paste JS for building, navigation, ' +
-        'inventory, world queries. Start at mcp-craft://prompt/skill.',
-      inputSchema: { uri: z.string() },
+        'Fetch an mcp-craft:// recipe article — copy-paste JS for building, world queries, ' +
+        'command-based construction. Start at mcp-craft://prompt/skill.',
+      inputSchema: { uri: z.string().max(512) },
     },
     async ({ uri }) => {
       const article = await loadRecipe(deps.recipesDir, uri)
-      return article ? ok(article) : err(`Unknown URI "${uri}". Known: ${(await listRecipeUris(deps.recipesDir)).join(', ')}`)
+      return article
+        ? ok(article)
+        : err(`Unknown URI "${uri}". Known: ${(await listRecipeUris(deps.recipesDir)).join(', ')}`)
     },
   )
 
@@ -1235,13 +1651,24 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
       description:
         'HEAVY/debug: send one raw chat line or slash-command. Prefer craft_execute_code with ' +
         'bot.chat(...) so sends compose with logic and verification.',
-      inputSchema: { world_name: z.string(), text: z.string(), task_id: z.string(), reason: z.string() },
+      inputSchema: {
+        world_name: z.string().max(256),
+        text: z.string().max(256),
+        task_id: z.string().max(256),
+        reason: z.string().max(4096),
+      },
     },
     async ({ world_name, text }) => {
       const entry = bots.get(world_name)
       if (!entry || entry.state !== 'ready') return err(`No ready bot in "${world_name}".`)
-      ;(entry.bot as BotLike & { chat: (t: string) => void }).chat(text)
-      return ok('sent')
+      const release = bots.tryLock(world_name)
+      if (!release) return err('bot busy: another script is running in this world — retry after it finishes')
+      try {
+        ;(entry.bot as BotLike & { chat: (t: string) => void }).chat(text)
+        return ok('sent')
+      } finally {
+        release()
+      }
     },
   )
 
@@ -1249,41 +1676,38 @@ export function createCraftServer(deps: CraftServerDeps): McpServer {
     'craft_take_screenshot',
     {
       description:
-        'HEAVY ENDPOINT, best-effort: render the bot POV to a PNG (prismarine-viewer headless). ' +
-        'For verification prefer craft_execute_code with bot.blockAt sweeps — this is for humans.',
-      inputSchema: { world_name: z.string(), task_id: z.string(), reason: z.string() },
+        'HEAVY ENDPOINT: render the bot POV. Not available in M1 — for verification use ' +
+        'craft_execute_code with bot.blockAt sweeps (mcp-craft://skill/world-queries).',
+      inputSchema: { world_name: z.string().max(256), task_id: z.string().max(256), reason: z.string().max(4096) },
     },
-    async ({ world_name }) => {
-      const entry = bots.get(world_name)
-      if (!entry || entry.state !== 'ready') return err(`No ready bot in "${world_name}".`)
-      try {
-        const path = await renderScreenshot(entry.bot)
-        return ok(`screenshot written: ${path}`)
-      } catch (e) {
-        console.error('screenshot failed:', e)
-        return err('screenshot unavailable on this host (headless-gl) — verify via bot.blockAt sweeps instead')
-      }
-    },
+    async () =>
+      err(
+        'screenshot not available in M1 — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway',
+      ),
   )
 
   server.registerTool(
     'craft_execute_feedback',
     {
-      description: 'Rate a prior craft_execute_code call 0.00–1.00 with an explanation; logged for tuning.',
+      description:
+        'Rate a prior craft_execute_code call 0.00–1.00 with an explanation. Requires the ' +
+        'execution_id that call returned.',
       inputSchema: {
-        task_id: z.string(),
-        execution_id: z.string(),
+        task_id: z.string().max(256),
+        execution_id: z.string().max(64),
         success_rating: z.number().min(0).max(1),
-        explanation: z.string(),
+        explanation: z.string().max(4096),
       },
     },
     async (args) => {
-      console.error(`feedback: ${JSON.stringify(args)}`)
-      return ok('recorded')
+      if (!issuedExecutions.has(args.execution_id))
+        return err(`Unknown execution_id "${args.execution_id}" — pass the id returned by craft_execute_code.`)
+      await appendFile(feedbackPath, JSON.stringify({ ...args, ts: new Date().toISOString() }) + '\n', 'utf8')
+      return ok(`recorded to ${feedbackPath}`)
     },
   )
 
-  return server
+  return { server, endAll: () => bots.endAll() }
 }
 
 function craftScope(bot: BotLike): Record<string, unknown> {
@@ -1294,7 +1718,10 @@ function craftScope(bot: BotLike): Record<string, unknown> {
     bot,
     waitFor: (event: string, timeoutMs = 10000) =>
       new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error(`waitFor("${event}") timed out after ${timeoutMs} ms`)), timeoutMs)
+        const t = setTimeout(
+          () => reject(new Error(`waitFor("${event}") timed out after ${timeoutMs} ms`)),
+          timeoutMs,
+        )
         bot.once(event, (...args: unknown[]) => {
           clearTimeout(t)
           resolve(args)
@@ -1305,11 +1732,10 @@ function craftScope(bot: BotLike): Record<string, unknown> {
 
 async function loadRecipe(recipesDir: string | undefined, uri: string): Promise<string | null> {
   if (!recipesDir) return null
-  const { readFile } = await import('node:fs/promises')
   const rel = uri.replace(/^mcp-craft:\/\//, '')
   if (!/^[a-z0-9/-]+$/.test(rel)) return null
   try {
-    return await readFile(`${recipesDir}/${rel}.md`, 'utf8')
+    return await readFile(join(recipesDir, `${rel}.md`), 'utf8')
   } catch {
     return null
   }
@@ -1317,25 +1743,12 @@ async function loadRecipe(recipesDir: string | undefined, uri: string): Promise<
 
 async function listRecipeUris(recipesDir: string | undefined): Promise<string[]> {
   if (!recipesDir) return []
-  const { readdir } = await import('node:fs/promises')
-  try {
-    const files = await readdir(`${recipesDir}/prompt`).catch(() => [] as string[])
-    const skills = await readdir(`${recipesDir}/skill`).catch(() => [] as string[])
-    return [
-      ...files.map((f) => `mcp-craft://prompt/${f.replace(/\.md$/, '')}`),
-      ...skills.map((f) => `mcp-craft://skill/${f.replace(/\.md$/, '')}`),
-    ]
-  } catch {
-    return []
+  const uris: string[] = []
+  for (const dir of ['prompt', 'skill']) {
+    const files = await readdir(join(recipesDir, dir)).catch(() => [] as string[])
+    uris.push(...files.map((f) => `mcp-craft://${dir}/${f.replace(/\.md$/, '')}`))
   }
-}
-
-async function renderScreenshot(bot: BotLike): Promise<string> {
-  const viewer = await import('prismarine-viewer')
-  const { tmpdir } = await import('node:os')
-  const path = `${tmpdir()}/devrig-craft-${Date.now()}.png`
-  await (viewer as any).headlessFrame(bot, { output: path, width: 960, height: 540 })
-  return path
+  return uris
 }
 ```
 
@@ -1346,9 +1759,10 @@ import mineflayer from 'mineflayer'
 import pathfinderPkg from 'mineflayer-pathfinder'
 import { Vec3 } from 'vec3'
 import minecraftData from 'minecraft-data'
+import prismarineItem from 'prismarine-item'
 import type { BotFactory, BotLike } from './botManager.js'
 
-const { pathfinder } = pathfinderPkg
+const { pathfinder, Movements, goals } = pathfinderPkg
 
 export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) => {
   const bot = mineflayer.createBot({ host, port, username, auth })
@@ -1357,13 +1771,16 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
     bot,
     Vec3,
     mcData: minecraftData(bot.version),
+    goals,
+    Movements,
+    Item: prismarineItem(bot.version),
     waitFor: (event: string, timeoutMs = 10000) =>
       new Promise((resolve, reject) => {
         const t = setTimeout(
           () => reject(new Error(`waitFor("${event}") timed out after ${timeoutMs} ms`)),
           timeoutMs,
         )
-        bot.once(event as any, (...args: unknown[]) => {
+        bot.once(event as Parameters<typeof bot.once>[0], (...args: unknown[]) => {
           clearTimeout(t)
           resolve(args)
         })
@@ -1373,42 +1790,37 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
 }
 ```
 
-Note: `prismarine-viewer`'s single-frame headless API differs across versions — if `headlessFrame` does not exist in the installed version, adapt `renderScreenshot` to the installed API (`viewer.headless(bot, { output, frames: 1 })` in older releases) and keep the catch-all error path; the contract under test is only "success returns a path, failure returns the guidance error".
+- [ ] **Step 5: Run tests to verify they pass**
 
-- [ ] **Step 4: Run test to verify it passes**
+Run: `npx vitest run test/wire.test.ts test/server.test.ts && npm test`
+Expected: all PASS. (`craft_fetch_resource`'s happy path stays red until Task 9 ships the corpus — if the runner insists on it now, assert only the unknown-URI branch here and move the happy-path assertion to Task 9 Step 5, where it is listed.)
 
-Run: `npx vitest run test/server.test.ts && npm test`
-Expected: all PASS (screenshot tool is not exercised against a fake bot beyond registration).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/server.ts src/runtime/mineflayerFactory.ts test/server.test.ts
-git commit -m "Register the 8 craft_* MCP tools mirroring the steroid surface"
+git add src/server.ts src/wire.ts src/runtime/mineflayerFactory.ts test/server.test.ts test/wire.test.ts
+git commit -m "Register the 8 craft_* tools: execution ids, per-world lock, snake_case wire"
 ```
 
 ---
 
-### Task 9: Recipe corpus + fence contract test
+### Task 9: Recipe corpus + typechecked fence contract
 
 **Files:**
-- Create: `resources/recipes/prompt/skill.md`, `resources/recipes/skill/navigation.md`, `resources/recipes/skill/building.md`, `resources/recipes/skill/building-with-commands.md`, `resources/recipes/skill/inventory.md`, `resources/recipes/skill/world-queries.md`, `resources/recipes/skill/survival.md`, `resources/recipes/skill/design-philosophy.md`
+- Create: `resources/recipes/prompt/skill.md`, `resources/recipes/skill/building.md`, `resources/recipes/skill/building-with-commands.md`, `resources/recipes/skill/world-queries.md`
 - Test: `test/recipes.test.ts`
+- Modify: `test/server.test.ts` (add the fetch happy-path test)
 
 **Interfaces:**
-- Consumes: `loadRecipe`/`listRecipeUris` behavior (Task 8) — files live under `resources/recipes/` and map `mcp-craft://<prompt|skill>/<name>` → `resources/recipes/<prompt|skill>/<name>.md`.
-- Produces: 8 markdown articles whose every ```js fence is a valid `craft_execute_code` body.
+- Consumes: `loadRecipe`/`listRecipeUris` mapping (Task 8): `mcp-craft://<prompt|skill>/<name>` → `resources/recipes/<prompt|skill>/<name>.md`.
+- Produces: the 4 M1 articles (spec §7); every ```js fence **type-checks** with `tsc --noEmit` against a prelude declaring exactly the sandbox scope — a `require`, an undeclared name, or a Node global fails the build.
 
-Content requirements per article (write full articles, not stubs; each 40–120 lines with at least one complete copy-paste ```js block):
+Content requirements (write full articles, 40–120 lines each, at least one complete copy-paste ```js block in every skill article):
 
-- `prompt/skill.md` — index of all URIs + the philosophy note: few tools, power in execute_code + recipes; verify via API not pixels.
-- `skill/navigation.md` — pathfinder: `const { goals, Movements } = bot.pathfinder ? require('mineflayer-pathfinder') : ...` — NO. Use the loaded plugin idiom: `bot.pathfinder.setMovements(new Movements(bot))` is set up by the factory; recipe shows `const { goals } = await import('mineflayer-pathfinder')` alternative and the canonical `bot.pathfinder.goto(new goals.GoalNear(x, y, z, 1))`, stuck recovery (timeout + re-goal), following a player.
-- `skill/building.md` — the promo happy path: pick a flat spot near the player, creative flight, `bot.placeBlock(referenceBlock, faceVector)` loop for a 5×5 house with door gap + torches; equipping blocks with `bot.creative.setInventorySlot`; reach/facing constraints (≤4.5 blocks, must look at the face); ends with a blockAt verification sweep printing a diff of expected vs actual.
-- `skill/building-with-commands.md` — detect cheats (`bot.game.gameMode`, try `/gamemode`), `/fill` and `/setblock` via `bot.chat`, when to prefer this (large builds), always verify after.
-- `skill/inventory.md` — creative `setInventorySlot` with `mcData.itemsByName`, survival crafting via `bot.craft`, counting items.
-- `skill/world-queries.md` — `bot.blockAt(new Vec3(...))`, `bot.findBlocks({ matching, maxDistance, count })`, entity queries via `bot.entities`; THE verification pattern (assert-what-you-built) as the article's centerpiece.
-- `skill/survival.md` — food/health monitoring, eating, night/mob basics to keep demos alive.
-- `skill/design-philosophy.md` — the tenets mapped to Minecraft, table of `craft_*` ↔ `steroid_*`, links to devrig.dev and github.com/jonnyzzz/mcp-steroid. This is the marketing payload.
+- `prompt/skill.md` — index of all M1 URIs + the philosophy note: few tools, power in execute_code + recipes; verify via API not pixels; scope reference (`bot`, `Vec3`, `mcData`, `goals`, `Movements`, `Item`, `print`, `printJson`, `sleep`, `waitFor` — and explicitly: no `require`, no `import`, use `sleep` not `setTimeout`). Prose-only (no js fences required).
+- `skill/building.md` — the promo happy path: pick a flat spot near the player; creative flight; equip via `bot.creative.setInventorySlot(36, new Item(mcData.itemsByName.stone.id, 64))`; `bot.placeBlock(referenceBlock, faceVector)` loop for a 5×5 house with door gap + torches; reach/facing constraints (≤4.5 blocks, must look at the face); pathfinder repositioning via `bot.pathfinder.goto(new goals.GoalNear(x, y, z, 2))` when out of reach; ends with a blockAt verification sweep printing expected-vs-actual.
+- `skill/building-with-commands.md` — detect cheats/op (`bot.game.gameMode`, try a `/gamemode` and read the chat reply), `/fill` and `/setblock` via `bot.chat`, when to prefer this (large builds), always verify with blockAt after.
+- `skill/world-queries.md` — `bot.blockAt(new Vec3(x, y, z))`, `bot.findBlocks({ matching, maxDistance, count })`, entity queries via `bot.entities`; THE verification pattern (assert-what-you-built) as the centerpiece.
 
 - [ ] **Step 1: Write the failing contract test**
 
@@ -1416,10 +1828,31 @@ Content requirements per article (write full articles, not stubs; each 40–120 
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { readFile, readdir } from 'node:fs/promises'
-import vm from 'node:vm'
+import { readFile, readdir, mkdir, writeFile, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
+const run = promisify(execFile)
 const RECIPES = 'resources/recipes'
+// Inside the repo so tsc resolves mineflayer types by walking up to node_modules.
+const FENCE_DIR = 'build/fence-check'
+
+// Mirrors the craft_execute_code scope EXACTLY (spec §6). "types": [] in the
+// generated tsconfig removes Node globals, so `require`/`setTimeout` in a
+// fence fail to compile — which is the point.
+const PRELUDE = `import type { Bot } from 'mineflayer'
+import type { Vec3 as Vec3Class } from 'vec3'
+declare const bot: Bot
+declare const Vec3: typeof Vec3Class
+declare const mcData: any
+declare const goals: any
+declare const Movements: any
+declare const Item: any
+declare function print(...args: unknown[]): void
+declare function printJson(v: unknown): void
+declare function sleep(ms: number): Promise<void>
+declare function waitFor(event: string, timeoutMs?: number): Promise<unknown[]>
+`
 
 async function allArticles(): Promise<Array<{ path: string; text: string }>> {
   const out: Array<{ path: string; text: string }> = []
@@ -1431,51 +1864,62 @@ async function allArticles(): Promise<Array<{ path: string; text: string }>> {
   return out
 }
 
-function jsFences(md: string): string[] {
-  return [...md.matchAll(/```js\n([\s\S]*?)```/g)].map((m) => m[1]!)
-}
+const jsFences = (md: string): string[] =>
+  [...md.matchAll(/```js\n([\s\S]*?)```/g)].map((m) => m[1]!)
 
 describe('recipe corpus', () => {
-  it('ships the 8 spec articles', async () => {
+  it('ships the 4 M1 articles', async () => {
     const paths = (await allArticles()).map((a) => a.path).sort()
     expect(paths).toEqual(
-      [
-        'prompt/skill.md',
-        'skill/building-with-commands.md',
-        'skill/building.md',
-        'skill/design-philosophy.md',
-        'skill/inventory.md',
-        'skill/navigation.md',
-        'skill/survival.md',
-        'skill/world-queries.md',
-      ].sort(),
+      ['prompt/skill.md', 'skill/building-with-commands.md', 'skill/building.md', 'skill/world-queries.md'].sort(),
     )
   })
 
-  it('every article has at least one js fence, except the two prose articles', async () => {
-    const proseOnly = new Set(['prompt/skill.md', 'skill/design-philosophy.md'])
+  it('every skill article has at least one js fence', async () => {
     for (const a of await allArticles()) {
-      if (proseOnly.has(a.path)) continue
+      if (a.path === 'prompt/skill.md') continue
       expect(jsFences(a.text).length, `${a.path} needs a js fence`).toBeGreaterThan(0)
     }
   })
 
-  it('every js fence parses as an async execute_code body', async () => {
+  it('every js fence type-checks as an execute_code body against the exact scope', async () => {
+    await rm(FENCE_DIR, { recursive: true, force: true })
+    await mkdir(FENCE_DIR, { recursive: true })
+    const files: string[] = []
     for (const a of await allArticles()) {
       for (const [i, fence] of jsFences(a.text).entries()) {
-        expect(
-          () => new vm.Script(`(async () => {\n${fence}\n})`),
-          `${a.path} fence #${i} must parse`,
-        ).not.toThrow()
+        const name = `${a.path.replace(/[/.]/g, '_')}_${i}.ts`
+        // Top-level await is legal here: the import type makes the file a module.
+        await writeFile(`${FENCE_DIR}/${name}`, PRELUDE + '\n' + fence)
+        files.push(name)
       }
     }
-  })
+    await writeFile(
+      `${FENCE_DIR}/tsconfig.json`,
+      JSON.stringify({
+        compilerOptions: {
+          target: 'es2022',
+          module: 'esnext',
+          moduleResolution: 'bundler',
+          strict: false,
+          noEmit: true,
+          skipLibCheck: true,
+          types: [],
+        },
+        files,
+      }),
+    )
+    await run('npx', ['tsc', '-p', `${FENCE_DIR}/tsconfig.json`]).catch((e: any) => {
+      throw new Error(`recipe fence failed to type-check:\n${e.stdout}\n${e.stderr}`)
+    })
+  }, 120000)
 
-  it('the index lists every skill URI', async () => {
+  it('the index lists every M1 skill URI and the scope contract', async () => {
     const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
-    for (const name of ['navigation', 'building', 'building-with-commands', 'inventory', 'world-queries', 'survival', 'design-philosophy']) {
+    for (const name of ['building', 'building-with-commands', 'world-queries']) {
       expect(index).toContain(`mcp-craft://skill/${name}`)
     }
+    expect(index).toContain('no `require`')
   })
 })
 ```
@@ -1485,15 +1929,14 @@ describe('recipe corpus', () => {
 Run: `npx vitest run test/recipes.test.ts`
 Expected: FAIL — `resources/recipes/prompt` does not exist.
 
-- [ ] **Step 3: Write the 8 articles**
+- [ ] **Step 3: Write the 4 articles**
 
-Write each article per the content requirements above. Sample fence style (from `skill/building.md`) — every fence must be a complete runnable `craft_execute_code` body like this:
+Write each article per the content requirements above. Sample fence style (from `skill/building.md`) — every fence must be a complete runnable `craft_execute_code` body against the injected scope (note: `Item` comes from scope, never from `require`):
 
 ```js
 // Build a 5x5 stone platform at the bot's feet (creative mode).
 const base = bot.entity.position.floored().offset(-2, -1, -2)
-const stone = mcData.itemsByName['stone']
-await bot.creative.setInventorySlot(36, new (require('prismarine-item')(bot.version))(stone.id, 64))
+await bot.creative.setInventorySlot(36, new Item(mcData.itemsByName.stone.id, 64))
 let placed = 0
 for (let dx = 0; dx < 5; dx++) {
   for (let dz = 0; dz < 5; dz++) {
@@ -1513,16 +1956,16 @@ for (let dx = 0; dx < 5; dx++)
 print(missing === 0 ? 'VERIFIED: platform complete' : `INCOMPLETE: ${missing} blocks missing`)
 ```
 
-(The exact placement idioms — creative slot index, prismarine-item construction — must be validated against the pinned mineflayer version during Task 12's integration run; fix the recipes there if the API differs. The contract test in this task only guarantees they parse.)
+(The exact placement idioms — creative slot 36 = hotbar 0, `Item` construction, reach handling — must be validated against the pinned mineflayer version during Task 12's integration run; fix the recipes there if the API differs. This task's contract test guarantees they type-check against mineflayer's own types, which already catches renamed methods.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/recipes.test.ts`
 Expected: 4 PASS.
 
-- [ ] **Step 5: Wire the recipes dir into the server test**
+- [ ] **Step 5: Add the fetch happy-path test to the server suite**
 
-Add to `test/server.test.ts` `beforeEach` deps: `recipesDir: 'resources/recipes'`, plus one test:
+Append to `test/server.test.ts`:
 
 ```ts
 it('fetches a recipe by mcp-craft URI', async () => {
@@ -1540,7 +1983,7 @@ Run: `npm test` → all PASS.
 
 ```bash
 git add resources/recipes test/recipes.test.ts test/server.test.ts
-git commit -m "Ship the mcp-craft:// recipe corpus with a js-fence parse contract"
+git commit -m "Ship the M1 recipe corpus with a tsc-typechecked fence contract"
 ```
 
 ---
@@ -1549,12 +1992,11 @@ git commit -m "Ship the mcp-craft:// recipe corpus with a js-fence parse contrac
 
 **Files:**
 - Create: `src/cli.ts`
-- Modify: `src/server.ts` (no changes expected — verify `createCraftServer` needs nothing new)
 - Test: `test/cli.test.ts`
 
 **Interfaces:**
-- Consumes: `createCraftServer` (Task 8), real sources (Task 5), `mineflayerFactory` (Task 8).
-- Produces: `devrig-craft` binary: no args (or `mcp`) → stdio MCP server; `worlds` → one-shot discovery print to stdout (human/debug); `--version`.
+- Consumes: `createCraftServer` + `endAll` (Task 8), real sources (Task 5), `mineflayerFactory` (Task 8).
+- Produces: `devrig-craft` binary: no args → stdio MCP server; `worlds` → one-shot discovery JSON to stdout; `--version`. Extra ping ports via repeatable `--port N` and `DEVRIG_CRAFT_PORTS=25565,25566` env fallback (flag wins). `SIGINT`/`SIGTERM` call `endAll()` before exit so bots leave the world cleanly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1573,14 +2015,25 @@ describe('cli', () => {
     expect(stdout.trim()).toBe('devrig-craft 0.1.0')
   })
 
-  it('worlds subcommand prints a JSON array (empty is fine)', async () => {
-    const { stdout } = await run('npx', ['tsx', 'src/cli.ts', 'worlds', '--window-ms', '200'])
-    expect(() => JSON.parse(stdout)).not.toThrow()
+  it('worlds subcommand prints a JSON array', async () => {
+    // --lan-port on a free ephemeral port: the test must not listen on the real
+    // 4445 (it would race other tests and any real Minecraft client).
+    const { stdout } = await run('npx', [
+      'tsx', 'src/cli.ts', 'worlds', '--window-ms', '200', '--lan-port', '39876', '--no-default-ports',
+    ])
+    expect(Array.isArray(JSON.parse(stdout))).toBe(true)
+  })
+
+  it('parses --port flags and the env fallback', async () => {
+    const flags = await run('npx', ['tsx', 'src/cli.ts', 'print-ports', '--port', '1', '--port', '2'])
+    expect(JSON.parse(flags.stdout)).toEqual([1, 2])
+    const env = await run('npx', ['tsx', 'src/cli.ts', 'print-ports'], {
+      env: { ...process.env, DEVRIG_CRAFT_PORTS: '3,4' },
+    })
+    expect(JSON.parse(env.stdout)).toEqual([3, 4])
   })
 })
 ```
-
-Add `tsx` to devDependencies: `npm install -D tsx`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1595,7 +2048,7 @@ Expected: FAIL — cli.ts missing.
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createCraftServer } from './server.js'
-import { collectLanAnnouncements, pingWorld } from './discovery/sources.js'
+import { collectLanAnnouncements, pingWorld, LAN_PORT } from './discovery/sources.js'
 import { buildSnapshot } from './discovery/snapshot.js'
 import { mineflayerFactory } from './runtime/mineflayerFactory.js'
 import { SERVER_NAME, SERVER_VERSION } from './version.js'
@@ -1604,9 +2057,22 @@ import { dirname, join } from 'node:path'
 
 const args = process.argv.slice(2)
 
-function flag(name: string, fallback: number): number {
+function numFlag(name: string, fallback: number): number {
   const i = args.indexOf(name)
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) : fallback
+}
+
+export function resolvePorts(argv: string[], env: NodeJS.ProcessEnv): number[] {
+  const fromFlags = argv
+    .flatMap((a, i) => (a === '--port' && argv[i + 1] ? [Number(argv[i + 1])] : []))
+    .filter((p) => Number.isInteger(p) && p > 0 && p <= 65535)
+  if (fromFlags.length > 0) return fromFlags
+  const fromEnv = (env.DEVRIG_CRAFT_PORTS ?? '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((p) => Number.isInteger(p) && p > 0 && p <= 65535)
+  if (fromEnv.length > 0) return fromEnv
+  return argv.includes('--no-default-ports') ? [] : [25565]
 }
 
 async function main() {
@@ -1614,20 +2080,34 @@ async function main() {
     console.log(`${SERVER_NAME} ${SERVER_VERSION}`)
     return
   }
+  const ports = resolvePorts(args, process.env)
+  if (args[0] === 'print-ports') {
+    console.log(JSON.stringify(ports))
+    return
+  }
+  const lanPort = numFlag('--lan-port', LAN_PORT)
   if (args[0] === 'worlds') {
-    const windowMs = flag('--window-ms', 1800)
-    const worlds = await buildSnapshot(() => collectLanAnnouncements(windowMs), pingWorld, [25565])
+    const windowMs = numFlag('--window-ms', 1800)
+    const worlds = await buildSnapshot(() => collectLanAnnouncements(windowMs, lanPort), pingWorld, ports)
     console.log(JSON.stringify(worlds, null, 2))
     return
   }
   // Default: stdio MCP server. stdout is JSON-RPC — everything else goes to stderr.
   const recipesDir = join(dirname(dirname(fileURLToPath(import.meta.url))), 'resources', 'recipes')
-  const server = createCraftServer({
-    lan: () => collectLanAnnouncements(),
+  const { server, endAll } = createCraftServer({
+    lan: () => collectLanAnnouncements(undefined, lanPort),
     ping: pingWorld,
     botFactory: mineflayerFactory,
     recipesDir,
+    extraPorts: ports,
   })
+  const shutdown = (signal: string) => {
+    console.error(`${SERVER_NAME}: ${signal} — disconnecting bots`)
+    endAll()
+    process.exit(0)
+  }
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
   await server.connect(new StdioServerTransport())
   console.error(`${SERVER_NAME} ${SERVER_VERSION} listening on stdio`)
 }
@@ -1638,50 +2118,75 @@ main().catch((e) => {
 })
 ```
 
-Note the recipes path: when running from `dist/cli.js`, `dirname(dirname(...))` is the package root — `resources/` ships in the npm package (add `"files": ["dist", "resources"]` to `package.json`).
+- [ ] **Step 4: Run tests, build, and the pack smoke**
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `npx vitest run test/cli.test.ts && npm run build && npm test`
-Expected: all PASS; build clean.
+Run: `npx vitest run test/cli.test.ts && npm test && npm run test:pack`
+Expected: all PASS; `test:pack` proves the tarball ships `resources/` and its bin answers `--version` through `npx` — the actual quickstart path.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/cli.ts test/cli.test.ts package.json package-lock.json
-git commit -m "Add devrig-craft CLI: stdio MCP server plus one-shot worlds discovery"
+git add src/cli.ts test/cli.test.ts
+git commit -m "Add devrig-craft CLI: stdio server, ports flags/env, clean shutdown, pack smoke"
 ```
 
 ---
 
-### Task 11: README with the tenet mapping
+### Task 11: CI workflow
 
 **Files:**
-- Create: `README.md`
+- Create: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: everything shipped; the marketing story from `docs/design.md` §1, §10.
+- Consumes: `npm test`, `npm run test:pack`, `npm run test:integration` (Tasks 1, 10, 12).
+- Produces: unit CI on every push/PR; Docker integration on manual dispatch + weekly schedule (not per-PR — minutes of world generation per run).
 
-- [ ] **Step 1: Write README.md**
+- [ ] **Step 1: Write the workflow**
 
-Required sections (write in full, promo-quality prose):
+`.github/workflows/ci.yml`:
 
-1. Hero: "devrig plays Minecraft" — one paragraph: the philosophy behind devrig/MCP Steroid (narrow tool surface, one code-execution tool, recipes) applied to Minecraft; 30-narrow-tools vs 8-tools-one-script comparison with the 10×10-platform tool-call count.
-2. Quickstart: open a world → Esc → *Open to LAN* (enable cheats) → `claude mcp add --scope user devrig-craft -- npx devrig-craft` → "build me a house".
-3. The 8 tools table (`craft_*` ↔ `steroid_*`, one line each).
-4. How discovery works (UDP 4445 + Server List Ping; no mods, no launcher integration — Prism "just works").
-5. Supported versions (the pinned range from `SUPPORTED_RANGE`), LAN/offline-only limitation, screenshot best-effort caveat.
-6. Links: devrig.dev, github.com/jonnyzzz/mcp-steroid, `docs/design.md`.
+```yaml
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+jobs:
+  unit:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:pack
+  integration:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+```
 
-- [ ] **Step 2: Verify quickstart honesty**
+- [ ] **Step 2: Verify and commit**
 
-Run: `npm run build && node dist/cli.js --version` — confirm the commands in the README are the commands that work.
-
-- [ ] **Step 3: Commit**
+Push a branch and confirm the `unit` job runs green before merging this task. Then:
 
 ```bash
-git add README.md
-git commit -m "Write README: devrig philosophy mapped to Minecraft, quickstart, tool table"
+git add .github/workflows/ci.yml
+git commit -m "Add CI: unit + pack smoke per PR, Docker integration on dispatch/schedule"
 ```
 
 ---
@@ -1692,8 +2197,8 @@ git commit -m "Write README: devrig philosophy mapped to Minecraft, quickstart, 
 - Create: `test-integration/smoke.test.ts`, `test-integration/docker.ts`
 
 **Interfaces:**
-- Consumes: the built server (`createCraftServer` with real ping + `mineflayerFactory`), `pingWorld` (Task 5).
-- Produces: CI-runnable proof of the whole loop: discover (ping path) → join → execute_code builds a 3×3 platform → blockAt verifies. Runs ONLY via `npm run test:integration` (needs Docker; never auto-skips at runtime — if Docker is missing the test fails, per the no-skip-detection constraint).
+- Consumes: `createCraftServer` with real ping + `mineflayerFactory`, `pingWorld` (Task 5).
+- Produces: proof of the whole loop against a real server, covering BOTH build paths: the deterministic `/setblock` path AND one physical `bot.placeBlock` (the product's main risk — exercised here, not first on camera). Runs ONLY via `npm run test:integration` (needs Docker; if Docker is missing the test fails — never auto-skips).
 
 - [ ] **Step 1: Write the docker helper**
 
@@ -1726,6 +2231,10 @@ export async function stopServer(id: string): Promise<void> {
   await run('docker', ['stop', id])
 }
 
+export async function opPlayer(id: string, name: string): Promise<void> {
+  await run('docker', ['exec', id, 'rcon-cli', 'op', name])
+}
+
 export async function waitForReady(timeoutMs = 300000): Promise<void> {
   const { pingWorld } = await import('../src/discovery/sources.js')
   const deadline = Date.now() + timeoutMs
@@ -1748,17 +2257,26 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createCraftServer } from '../src/server.js'
 import { pingWorld } from '../src/discovery/sources.js'
 import { mineflayerFactory } from '../src/runtime/mineflayerFactory.js'
-import { startServer, stopServer, waitForReady, MC_PORT } from './docker.js'
+import { startServer, stopServer, opPlayer, waitForReady, MC_PORT } from './docker.js'
 
 let containerId: string
 let client: Client
+let worldName: string
 
 const text = (r: any) => r.content[0].text as string
+const output = (r: any) => text(r).split('\n').slice(1).join('\n') // drop the execution_id line
+
+async function exec(code: string) {
+  return client.callTool({
+    name: 'craft_execute_code',
+    arguments: { world_name: worldName, code, task_id: 'smoke', reason: 'integration smoke' },
+  })
+}
 
 beforeAll(async () => {
   containerId = await startServer()
   await waitForReady()
-  const server = createCraftServer({
+  const { server } = createCraftServer({
     lan: async () => [],
     ping: pingWorld,
     botFactory: mineflayerFactory,
@@ -1768,42 +2286,29 @@ beforeAll(async () => {
   const [ct, st] = InMemoryTransport.createLinkedPair()
   client = new Client({ name: 'smoke', version: '0.0.0' })
   await Promise.all([server.connect(st), client.connect(ct)])
-}, 360000)
+
+  const worlds = JSON.parse(text(await client.callTool({ name: 'craft_list_worlds', arguments: {} })))
+  const world = worlds.find((w: any) => w.port === MC_PORT)
+  expect(world?.compatible).toBe(true)
+  worldName = world.world_name
+
+  await client.callTool({ name: 'craft_join_world', arguments: { world_name: worldName } })
+  for (let i = 0; i < 90; i++) {
+    const bots = JSON.parse(text(await client.callTool({ name: 'craft_list_bots', arguments: {} })))
+    if (bots[0]?.state === 'ready') break
+    if (bots[0]?.state === 'error') throw new Error(bots[0].error)
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  await opPlayer(containerId, 'devrig')
+}, 420000)
 
 afterAll(async () => {
   if (containerId) await stopServer(containerId)
 })
 
 describe('end-to-end smoke', () => {
-  it('discovers the dockerized server', async () => {
-    const worlds = JSON.parse(text(await client.callTool({ name: 'craft_list_worlds', arguments: {} })))
-    expect(worlds.some((w: any) => w.port === MC_PORT && w.compatible)).toBe(true)
-  })
-
-  it('joins, builds a 3x3 platform via execute_code, and verifies it', async () => {
-    const worlds = JSON.parse(text(await client.callTool({ name: 'craft_list_worlds', arguments: {} })))
-    const worldName = worlds.find((w: any) => w.port === MC_PORT).worldName
-
-    await client.callTool({ name: 'craft_join_world', arguments: { world_name: worldName } })
-    for (let i = 0; i < 60; i++) {
-      const bots = JSON.parse(text(await client.callTool({ name: 'craft_list_bots', arguments: {} })))
-      if (bots[0]?.state === 'ready') break
-      if (bots[0]?.state === 'error') throw new Error(bots[0].error)
-      await new Promise((r) => setTimeout(r, 1000))
-    }
-
-    // Op the bot via server console so /setblock works, then build via commands
-    // (the command path is deterministic; the placeBlock path is exercised by the
-    // building recipe during manual demo validation).
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    await promisify(execFile)('docker', ['exec', containerId, 'rcon-cli', 'op', 'devrig'])
-
-    const res = await client.callTool({
-      name: 'craft_execute_code',
-      arguments: {
-        world_name: worldName,
-        code: `
+  it('builds a 3x3 platform via /setblock and verifies with blockAt', async () => {
+    const res = await exec(`
 const base = bot.entity.position.floored().offset(2, 0, 2)
 for (let dx = 0; dx < 3; dx++)
   for (let dz = 0; dz < 3; dz++)
@@ -1814,66 +2319,59 @@ for (let dx = 0; dx < 3; dx++)
   for (let dz = 0; dz < 3; dz++)
     if (bot.blockAt(base.offset(dx, 0, dz))?.name === 'stone') ok++
 print('stone blocks verified: ' + ok + '/9')
-`,
-        task_id: 'smoke',
-        reason: 'integration smoke: build and verify a 3x3 platform',
-      },
-    })
-    expect(text(res)).toBe('stone blocks verified: 9/9')
-  }, 300000)
+`)
+    expect(output(res)).toBe('stone blocks verified: 9/9')
+  }, 120000)
+
+  it('places one block physically via bot.placeBlock (the promo path)', async () => {
+    // Deterministic reference: /setblock a dirt anchor next to the bot first,
+    // then physically place on top of it — spawn terrain varies too much to
+    // rely on whatever happens to be underfoot.
+    const res = await exec(`
+const anchor = bot.entity.position.floored().offset(2, -1, 0)
+bot.chat('/setblock ' + anchor.x + ' ' + anchor.y + ' ' + anchor.z + ' minecraft:dirt')
+bot.chat('/setblock ' + anchor.x + ' ' + (anchor.y + 1) + ' ' + anchor.z + ' minecraft:air')
+await sleep(2000)
+await bot.creative.setInventorySlot(36, new Item(mcData.itemsByName.stone.id, 1))
+await sleep(500)
+const ref = bot.blockAt(anchor)
+await bot.placeBlock(ref, new Vec3(0, 1, 0))
+await sleep(1000)
+const placed = bot.blockAt(anchor.offset(0, 1, 0))
+print('physically placed: ' + placed?.name)
+`)
+    expect(output(res)).toBe('physically placed: stone')
+  }, 120000)
 })
 ```
 
-- [ ] **Step 3: Run the integration test**
+- [ ] **Step 3: Run the integration suite**
 
 Run: `npm run test:integration`
-Expected: 2 PASS (first run pulls the image and generates a world — minutes). If the mineflayer/recipe idioms from Task 9 turn out wrong against this pinned version, fix the recipes now and re-run `npm test` too.
+Expected: 2 PASS (first run pulls the image and generates a world — minutes). **This is where the mineflayer idioms meet reality:** if `setInventorySlot`/`placeBlock`/`Item` calls fail against the pinned version, fix BOTH the test and the Task 9 recipes now, and re-run `npm test` (the fence typecheck) too.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add test-integration/smoke.test.ts test-integration/docker.ts
-git commit -m "Add dockerized end-to-end smoke: discover, join, build, blockAt-verify"
+git commit -m "Add Docker smoke: discover, join, command build AND physical placeBlock, verify"
 ```
 
 ---
 
-### Task 13: Manual Prism/LAN validation script (docs only)
+## M1 acceptance gate
 
-**Files:**
-- Create: `docs/manual-demo.md`
+M1 is done when, on a clean machine:
 
-**Interfaces:**
-- Consumes: the shipped CLI (Task 10), README quickstart (Task 11).
+1. `npm ci && npm test` — green (typecheck + all unit suites).
+2. `npm run test:pack` — green (tarball carries resources, bin runs via npx).
+3. `npm run test:integration` — 2/2 green against Docker.
+4. The `unit` CI job is green on `main`.
 
-- [ ] **Step 1: Write the manual validation checklist**
-
-`docs/manual-demo.md` — the exact demo script, each step with its expected observation:
-
-1. Launch a 1.21.x instance from Prism Launcher, create/open a singleplayer creative world with cheats ON.
-2. Esc → *Open to LAN* → note the port in chat.
-3. `node dist/cli.js worlds` → expect a JSON entry with `source: "lan"`, the same port, `compatible: true`.
-4. `claude mcp add --scope user devrig-craft -- npx devrig-craft` (note `--scope user` — Claude defaults to project-local).
-5. In Claude Code: "Find my running Minecraft world and build a small house with a door and torches next to me. Verify it block-by-block when done."
-6. Expected tool sequence: `craft_list_worlds` → `craft_join_world` → poll `craft_list_bots` → `craft_fetch_resource(building)` → `craft_execute_code` (1–3 calls) → verification sweep output.
-7. In-game observation: the `devrig` bot appears, flies to a flat spot, places the house; chat shows nothing except any `/`-commands it chose to use.
-8. Record: total tool calls, tokens, wall time — the numbers for the promo table.
-
-- [ ] **Step 2: Execute the checklist once on this machine and fix what breaks**
-
-This is the M2 gate: the LAN announce parser, join flow, and building recipes have now met a real Prism instance. File and fix issues before calling M1+M2 done.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add docs/manual-demo.md
-git commit -m "Document the Prism LAN manual demo checklist (M2 gate)"
-```
-
----
+Everything else (remaining recipes, screenshots, README, Prism manual validation, promo assets) is M2/M3 — see `docs/plans/2026-08-28-devrig-craft-m2.md`.
 
 ## Self-review notes
 
-- Spec coverage: §4 discovery → Tasks 2–5; §5 tools → Task 8; §6 runtime → Tasks 6–8; §7 recipes → Task 9; §8 build modes → recipes (building.md / building-with-commands.md); §9 testing → Tasks 1–12 unit + Task 12 integration; §10–11 promo/M-milestones → Tasks 11, 13 cover M1+M2 scope; M3 (comparison harness, video) is intentionally out of this plan — separate plan once M2 is validated.
-- Known API risk concentrated in two places by design: `prismarine-viewer` single-frame rendering (Task 8 note) and creative-inventory idioms in recipes (Task 9 note, validated in Task 12/13). Both have explicit fix-here instructions.
-- Type consistency: `DiscoveredWorld.worldName` (camelCase internal) vs `world_name` (snake_case MCP params) is deliberate and consistent throughout: JSON output uses `worldName`, tool params use `world_name`.
+- Spec coverage: §4 discovery (stability, MOTD/players, port flags, parallel ping) → Tasks 2–5, 10; §5 tools (execution_id, busy lock, snake_case, M1 screenshot branch) → Task 8; §6 runtime (scope incl. goals/Movements/Item, limits, failing line, timeout→disconnect) → Tasks 6–8; §7 corpus (4 articles, tsc fences) → Task 9; §9 testing & CI → Tasks 1, 5, 9–12; §11 M1 gate → explicit section above.
+- Review findings incorporated: #3–#7, #9–#16, #18(partial: feedback JSONL; captured datagram deferred to M2 with spec note), #19–#27. #1 resolved as documented limitation + timeout-disconnect (spec §2/§6); #2 resolved by widening the scope in the spec; #8/#17 moved to M2 with the screenshot success path.
+- Type consistency: `worldName` camelCase is internal only; `toWire` converts at the boundary and the server test asserts no camelCase key leaks. `PingResult` produced by Task 5 matches Task 4's type. `ScriptError.timedOut` produced in Task 6 is consumed in Task 8. `tryLock` produced in Task 7 is consumed in Task 8.
