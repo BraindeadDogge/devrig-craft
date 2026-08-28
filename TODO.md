@@ -2,6 +2,27 @@
 
 Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
 
+## M3 input: manual demo numbers (2026-08-28, M2 sign-off)
+
+Live run against a vanilla 1.21.4 Prism world (Open to LAN, cheats on),
+headless Claude Code with devrig-craft as the only MCP server. Prompt:
+"build a small house with a door and torches next to me, verify
+block-by-block", steered to the command path and chat narration.
+
+- **Tool calls: 8** (1 list_worlds, 1 join_world, 1 list_bots,
+  2 fetch_resource, 3 execute_code)
+- **Wall time: 52 s** prompt→VERIFIED (model: sonnet)
+- **Output tokens: 3193**; cost $0.27
+- Result: 6×5×6 stone-brick house, oak door, interior + entrance
+  torches, blockAt sweep VERIFIED, full narration in game chat.
+- Lessons folded back already: `bot.creative.flyTo` hangs on LAN hosts
+  (navigation recipe warns), a slow/reasoning-heavy model makes the
+  in-game pauses painful — use a fast model for live demos, and steer
+  the prompt to /fill//setblock for bulk.
+- Still open for M3: run the same task against a narrow-tools Minecraft
+  MCP for the side-by-side table (expect ~100 calls for the platform
+  alone).
+
 ## Blocked on other tracks
 
 - ~~CI: add `npm run test:pack` to the `unit` job~~ — restored with Task 10.

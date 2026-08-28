@@ -58,8 +58,25 @@ Connected`).
   path should be what the agent does. If it doesn't, the recipe needs a
   louder hint, not the agent a scolding.
 
+## Demo pacing (learned the hard way)
+
+- **Use a fast model** for live runs (`claude -p --model sonnet`): a
+  reasoning-heavy model leaves the bot standing still for minutes between
+  steps while it thinks, which reads as "frozen" to the audience.
+- **Steer to the command path** in the prompt when cheats are on ("use
+  /setblock and /fill for the bulk") — physical placement is the flourish,
+  not the workhorse.
+- **Ask for narration explicitly** ("narrate what you are doing and thinking
+  in the game chat") — the reason param is spoken automatically, but the
+  in-script bot.chat() milestones come from the agent.
+
 ## Sign-off
 
 M2 is done when steps 1–8 have run green on a real Prism instance, the
 captured-datagram fixture from step 4 is merged, and the numbers from step 8
 are filed in `TODO.md` for the M3 comparison work.
+
+**Signed off 2026-08-28.** Steps 1–8 ran green against "BraindeadDogge -
+New World" (vanilla 1.21.4 via Prism): discovery, join, narrated
+command-path build, blockAt-verified house, 8 tool calls / 52 s wall.
+Numbers filed in `TODO.md`; datagram fixture merged (PR #23).
