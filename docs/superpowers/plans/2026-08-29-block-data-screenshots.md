@@ -919,7 +919,7 @@ Expected: FAIL — the tool returns its "not available on this install" error.
 In `src/server.ts`, add the imports:
 
 ```ts
-import { collectGrid } from './render/collect.js'
+import { collectGrid, type BlockSource } from './render/collect.js'
 import { renderView, type View } from './render/blockView.js'
 import { encodePng } from './render/png.js'
 ```
@@ -955,7 +955,7 @@ Replace the whole `server.registerTool('craft_take_screenshot', …)` block with
         return err(
           `No ready bot in "${world_name}" (state: ${entry?.state ?? 'none'}). Call craft_join_world, then poll craft_list_bots until state=ready.`,
         )
-      const blockAt = (entry.bot as BotLike & { blockAt?: BlockSourceFn }).blockAt
+      const blockAt = (entry.bot as BotLike & Partial<BlockSource>).blockAt
       if (typeof blockAt !== 'function')
         return err('this bot cannot read the world (no blockAt) — rejoin with craft_join_world')
 
@@ -988,18 +988,13 @@ Replace the whole `server.registerTool('craft_take_screenshot', …)` block with
   )
 ```
 
-Add the helper type next to the other local types near the top of the file:
-
-```ts
-type BlockSourceFn = (pos: { x: number; y: number; z: number }) => { name?: string } | null
-```
-
 - [ ] **Step 4: Run the whole suite**
 
 Run: `npm test`
-Expected: PASS. The `craft_take_screenshot` description changed, so if
-`test/wire.test.ts` asserts on tool descriptions, update that assertion to
-match the new text rather than weakening it.
+Expected: PASS. `test/wire.test.ts` asserts on the tool LIST, not on
+descriptions (verified 2026-08-29), so changing the description breaks
+nothing. If a description assertion appears later, update it to the new text
+rather than weakening it.
 
 - [ ] **Step 5: Type-check and commit**
 
@@ -1053,11 +1048,11 @@ Expected: FAIL — `skill.md` does not mention `craft_take_screenshot`.
 
 - [ ] **Step 3: Make the three documentation edits**
 
-In `resources/recipes/prompt/skill.md`, add a closing rule to the numbered
-rules (keep the existing numbering; this becomes the last one):
+In `resources/recipes/prompt/skill.md` the numbered rules currently end at
+`10.` (line 90). Add rule 11 immediately after it:
 
 ```markdown
-N. **Look at what you built before you call it done.** When the build stands,
+11. **Look at what you built before you call it done.** When the build stands,
    `craft_take_screenshot` it from all four sides and from above, and look at
    the pictures. Compare them against what you set out to build. Then say
    plainly whether it is right — and if it is not, name what is wrong and fix
