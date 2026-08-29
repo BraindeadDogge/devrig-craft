@@ -5,6 +5,7 @@ import { Vec3 } from 'vec3'
 import minecraftData from 'minecraft-data'
 import type { Item as ItemClass } from 'prismarine-item'
 import type { BotFactory, BotLike } from './botManager.js'
+import { digSightRefusal, reachRefusal, sightRefusal } from './placementContract.js'
 
 // prismarine-item ships ESM-style typings over a CJS module.exports —
 // a NodeNext default import resolves to the namespace and is not callable.
@@ -120,14 +121,28 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
       return Boolean(hit && hit.position && hit.position.equals(pos))
     }
 
+    // Every face of a block, so a refusal can name the ones that WOULD work.
+    const ALL_FACES = [
+      new Vec3(0, -1, 0), new Vec3(0, 1, 0), new Vec3(1, 0, 0),
+      new Vec3(-1, 0, 0), new Vec3(0, 0, 1), new Vec3(0, 0, -1),
+    ]
     const origPlaceBlock = bot.placeBlock.bind(bot)
     bot.placeBlock = async (ref, face) => {
       const target = ref.position.plus(face).offset(0.5, 0.5, 0.5)
       if (eye().distanceTo(target) > REACH)
-        throw new Error(`placeBlock: target ${target.floored()} is out of arm's reach (${REACH}) — walk closer first`)
+        throw new Error(
+          reachRefusal('placeBlock', target.floored(), eye().distanceTo(target), REACH),
+        )
       if (!canSeeFace(ref.position, face))
         throw new Error(
-          `placeBlock: no line of sight to that face of ${ref.name} at ${ref.position} — a person cannot click through blocks; reposition (or get above/beside it) first`,
+          sightRefusal({
+            refName: ref.name,
+            refPos: ref.position,
+            face,
+            visibleFaces: ALL_FACES.filter((f) => canSeeFace(ref.position, f)),
+            distance: eye().distanceTo(ref.position.offset(0.5, 0.5, 0.5)),
+            reach: REACH,
+          }),
         )
       await pace()
       await bot.lookAt(target, false) // smooth turn: the human sees the head move
@@ -137,9 +152,11 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
     bot.dig = (async (block: Parameters<typeof origDig>[0], ...rest: unknown[]) => {
       const target = block.position.offset(0.5, 0.5, 0.5)
       if (eye().distanceTo(target) > REACH)
-        throw new Error(`dig: block ${block.position} is out of arm's reach (${REACH}) — walk closer first`)
+        throw new Error(reachRefusal('dig', block.position, eye().distanceTo(target), REACH))
       if (!canSeeBlockCenter(block.position))
-        throw new Error(`dig: no line of sight to ${block.name} at ${block.position} — a person cannot mine through walls`)
+        throw new Error(
+          digSightRefusal(block.name, block.position, eye().distanceTo(target), REACH),
+        )
       await pace()
       await bot.lookAt(target, false)
       return (origDig as (...args: unknown[]) => Promise<void>)(block, ...rest)
