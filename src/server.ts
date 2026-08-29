@@ -115,7 +115,17 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
             'what you are doing and why, in one human-readable sentence — it is SPOKEN INTO THE ' +
               'GAME CHAT as narration for the human watching, then logged',
           ),
-        timeout: z.number().int().min(1).max(600).optional().describe('seconds, default 120'),
+        // A whole house is one call by design, and the phases measured at
+        // 220s and counting — 600s was too tight to finish one. Still an
+        // explicit ceiling, not an open door: an agent will eventually ask
+        // for 999999.
+        timeout: z
+          .number()
+          .int()
+          .min(1)
+          .max(3600)
+          .optional()
+          .describe('seconds, default 120, max 3600'),
       },
     },
     async ({ world_name, code, task_id, reason, timeout }) => {
@@ -157,13 +167,29 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
             console.error('bot end after timeout failed:', endErr)
           }
           return err(
-            `execution_id: ${executionId}\n${e.message}\nBot disconnected to stop the runaway script — craft_join_world to rejoin.`,
+            [
+              `execution_id: ${executionId}`,
+              e.message,
+              // The output is the point of the run: a build prints how far it
+              // got, and a timeout that swallows that teaches nothing.
+              e.output ? `--- printed before the timeout ---\n${e.output}` : undefined,
+              'Bot disconnected to stop the runaway script — craft_join_world to rejoin.',
+            ]
+              .filter(Boolean)
+              .join('\n'),
           )
         }
         if (e instanceof ScriptError) {
           say(entry.bot, `[devrig] hit a snag: ${e.message}`)
           return err(
-            `execution_id: ${executionId}\n${[e.message, e.failingLine, e.scriptStack].filter(Boolean).join('\n')}`,
+            `execution_id: ${executionId}\n${[
+              e.message,
+              e.failingLine,
+              e.scriptStack,
+              e.output ? `--- printed before the error ---\n${e.output}` : undefined,
+            ]
+              .filter(Boolean)
+              .join('\n')}`,
           )
         }
         throw e

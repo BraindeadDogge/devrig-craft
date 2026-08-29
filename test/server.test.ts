@@ -138,9 +138,13 @@ describe('craft MCP server', () => {
     const tooBig = await exec('x'.repeat(100_001))
     expect(tooBig.isError).toBe(true)
     expect(text(tooBig)).toContain('at most 100000')
-    const badTimeout = await exec('print(1)', 601)
+    // The ceiling moved to an hour so a whole house fits in one call, but a
+    // ceiling still has to exist — an agent will eventually ask for 999999.
+    const okTimeout = await exec('print(1)', 1800)
+    expect(okTimeout.isError, 'half an hour must be allowed now').toBeFalsy()
+    const badTimeout = await exec('print(1)', 3601)
     expect(badTimeout.isError).toBe(true)
-    expect(text(badTimeout)).toContain('less than or equal to 600')
+    expect(text(badTimeout)).toContain('less than or equal to 3600')
   })
 
   it('serializes executions: concurrent call gets an explicit busy error', async () => {
