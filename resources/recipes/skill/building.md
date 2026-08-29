@@ -112,9 +112,11 @@ async function place(target) {
     }
     await bot.lookAt(target.offset(0.5, 0.5, 0.5), true)
     // NEVER await placeBlock bare — it hangs when the server rejects the
-    // click. Race a 4s watchdog and trust blockAt, not the promise.
+    // click. Race a 4s watchdog and trust blockAt, not the promise. Print the
+    // refusal: "out of arm's reach" and "no line of sight" come from the
+    // runtime's placement contract and tell you exactly what to fix.
     await Promise.race([
-      bot.placeBlock(ref, face).catch(() => {}),
+      bot.placeBlock(ref, face).catch((e) => print(`  refused: ${e.message}`)),
       sleep(4000),
     ])
     if (bot.blockAt(target)?.boundingBox === 'block') return 'placed'
