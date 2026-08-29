@@ -154,9 +154,17 @@ Screenshots first: self-contained, testable without a world, and it immediately
 gives the human the thing they asked for. The recipe restructure second, since
 its final step depends on the render existing.
 
+These are two implementation plans, not one. Part 1 touches `src/` and the tool
+schema and can ship on its own; Part 2 rewrites the recipe corpus and is only
+worth starting once there is something to photograph with. Writing them as a
+single plan would couple two changes that have no reason to land together.
+
 ## Open questions
 
 - The colour palette is a judgement call; start with a dozen common building
   blocks and a fallback grey, extend when something reads badly.
 - Whether `verifyPlan`'s diff should also be rendered as an image (a
   "differences" view) is deferred until the text diff proves insufficient.
+- Concrete ceilings for `radius`, `size` and view count are left to
+  implementation, but they are not optional: unbounded model-supplied input is
+  banned outright by CLAUDE.md, and a render box scales cubically.
