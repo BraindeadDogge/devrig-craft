@@ -6,6 +6,7 @@ import minecraftData from 'minecraft-data'
 import type { Item as ItemClass } from 'prismarine-item'
 import type { BotFactory, BotLike } from './botManager.js'
 import { digSightRefusal, reachRefusal, sightRefusal } from './placementContract.js'
+import { guardStopFlying } from './gravityGuard.js'
 
 // prismarine-item ships ESM-style typings over a CJS module.exports —
 // a NodeNext default import resolves to the namespace and is not callable.
@@ -63,6 +64,13 @@ export const mineflayerFactory: BotFactory = ({ host, port, username, auth }) =>
   // Patched on 'inject_allowed': mineflayer attaches placeBlock/dig via
   // plugins AFTER createBot returns — binding them synchronously here reads
   // undefined and breaks the join.
+  // Before any script can touch it: mineflayer's stopFlying() nulls gravity on
+  // a bot that never flew, which permanently disables jumping (see
+  // gravityGuard.ts). Recipes call it defensively before walking.
+  bot.once('spawn', () => {
+    guardStopFlying(bot as unknown as Parameters<typeof guardStopFlying>[0])
+  })
+
   bot.once('inject_allowed', () => {
     // Human mouse flick: the default smooth-look turn is leisurely; a person
     // snaps to a nearby block in ~150ms. Raising the turn rates keeps looks
