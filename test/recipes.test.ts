@@ -424,6 +424,59 @@ describe('recipe corpus', () => {
     }
   })
 
+  it('the helpers shared by both build fences are byte-identical', async () => {
+    // design.md:112 bans a wrapper layer, so the two fences necessarily carry
+    // the same helpers twice. What is NOT acceptable is for the copies to
+    // drift: seesFace did exactly that, ending up looser than the runtime's
+    // own check, and one placement in five was doomed before it was sent.
+    // Duplication we can live with; divergence we cannot, so pin it here.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/house.md`, 'utf8'))
+    const shared = [
+      'function seesFace',
+      'function chooseFaces',
+      'async function walkTo',
+      'async function raiseTo',
+      'async function flyClear',
+      'async function standWhereVisible',
+      'async function stepAside',
+      'async function land',
+      'function whereAmI',
+      'async function climbOutOfPit',
+    ]
+    const extract = (fence: string, name: string): string => {
+      const start = fence.indexOf(name)
+      expect(start, `both build fences must define ${name}`).toBeGreaterThan(-1)
+      const rest = fence.slice(start)
+      const end = rest.indexOf('\n}')
+      expect(end, `${name} must be a complete declaration`).toBeGreaterThan(-1)
+      return rest.slice(0, end + 2)
+    }
+    for (const name of shared) {
+      const a = extract(fences[1]!, name)
+      const b = extract(fences[2]!, name)
+      expect(b, `${name} has drifted between Step 2a and Step 2b`).toBe(a)
+    }
+  })
+
+  it("humanlike's sight test is the same code the house fences use", async () => {
+    // A third copy, and the one a model reads when it builds something that is
+    // not a house. If it teaches a looser test than the runtime enforces, every
+    // recipe written from it inherits the same wasted clicks.
+    const house = jsFences(await readFile(`${RECIPES}/skill/house.md`, 'utf8'))[1]!
+    const humanlike = await readFile(`${RECIPES}/skill/humanlike.md`, 'utf8')
+    const body = (src: string): string => {
+      const at = src.indexOf('function seesFace')
+      const rest = src.slice(at)
+      return rest
+        .slice(0, rest.indexOf('\n}') + 2)
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('//'))
+        .map((l) => l.trim())
+        .join('\n')
+    }
+    expect(body(humanlike), 'humanlike teaches a different sight test').toBe(body(house))
+  })
+
   it('flight is flown, not teleported', async () => {
     // bot.creative.flyTo walks the ENTITY POSITION along a straight line with
     // no collision check and no timeout on its last step; the server fights it
