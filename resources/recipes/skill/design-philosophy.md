@@ -43,9 +43,12 @@ article, not a scope extension — prompts compound, wrappers rot.
 | `craft_chat` | `steroid_input` |
 | `craft_execute_feedback` | `steroid_execute_feedback` |
 
-Even the habits transfer: verify through the API (`bot.blockAt` sweeps), not
-through pixels; treat screenshots as a heavy debug endpoint for humans; return
-data by printing it, because the response is exactly what the script printed.
+Even the habits transfer: correctness is decided through the API (`bot.blockAt`
+sweeps), never by counting pixels; screenshots answer the other question —
+`craft_take_screenshot` renders the build from block data so the agent can
+judge how it *looks* before calling it done (`docs/design.md` §13); and data
+comes back by printing it, because the response is exactly what the script
+printed.
 
 ## Where the real thing lives
 
