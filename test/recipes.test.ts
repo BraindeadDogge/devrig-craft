@@ -551,8 +551,17 @@ describe('recipe corpus', () => {
     // Every defect found on 2026-08-29 was found by a human looking at the
     // world and saying so. A verdict of "done" that was never looked at is
     // exactly the failure this step exists to prevent.
-    const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
-    expect(index).toContain('craft_take_screenshot')
-    expect(index).toMatch(/look at (them|the)/i)
+    const raw = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
+    // Collapse whitespace so markdown line-wrapping cannot decide the result.
+    const index = raw.replace(/\s+/g, ' ')
+    expect(index, 'mentions craft_take_screenshot').toContain('craft_take_screenshot')
+    expect(
+      index,
+      'tells the agent to compare what it sees against what it set out to build',
+    ).toMatch(/compare .{0,80}(what you (see|built)|the pictures|them) against .{0,80}(what you (set out to build|built|meant to build)|your intent)/i)
+    expect(
+      index,
+      'tells the agent to state a verdict and fix what is wrong',
+    ).toMatch(/say plainly whether it is right.{0,120}name what is wrong and fix it/i)
   })
 })

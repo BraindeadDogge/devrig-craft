@@ -110,7 +110,7 @@ Microsoft account.
 | `craft_join_world` | `steroid_open_project` | Async: initiates join, returns quickly (echoing resolved host:port); caller polls `craft_list_bots` until ready. Joins time out after 60 s into an error state. Params: `world_name`, optional `username` |
 | `craft_execute_code` | `steroid_execute_code` | THE tool. JS (async function body) with `bot` + scope in scope; response is `execution_id: <uuid>` on the first line, then only what the script prints. Params: `world_name`, `code` (≤100 KB), `task_id`, `reason`, `timeout` seconds (1–600, default 120) |
 | `craft_fetch_resource` | `steroid_fetch_resource` | Serves `mcp-craft://` recipe articles by URI |
-| `craft_take_screenshot` | `steroid_take_screenshot` | HEAVY ENDPOINT, debugging only. **Ships as the tested error branch only** ("unavailable — verify via bot.blockAt sweeps") — see the §13 descope decision; a future success path would return an MCP image payload (`type: 'image'`, base64), not a file path |
+| `craft_take_screenshot` | `steroid_take_screenshot` | HEAVY ENDPOINT, debugging only. Renders a bounded `bot.blockAt` cube as orthographic PNGs (no GL) — see the §13 reversal; correctness is still decided by `bot.blockAt` sweeps, never by the picture |
 | `craft_chat` | `steroid_input` | HEAVY/debug: raw chat or slash-command. Description steers agents to `craft_execute_code` (`bot.chat(...)`) instead |
 | `craft_execute_feedback` | `steroid_execute_feedback` | Same rating contract; requires an `execution_id` previously returned by `craft_execute_code` (unknown ids are rejected); appends JSONL to a local file and returns its path |
 
