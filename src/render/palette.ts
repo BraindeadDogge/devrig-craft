@@ -5,7 +5,11 @@ export type Rgb = readonly [number, number, number]
 const EXACT: Record<string, Rgb> = {
   oak_planks: [162, 130, 78],
   oak_log: [109, 85, 50],
-  oak_door: [145, 115, 66],
+  // A door is drawn as a dark opening rather than as its in-game timber: at
+  // one pixel per block the real colour sits 17 away from oak_planks and the
+  // entrance vanishes into the wall. Legibility beats fidelity here — that is
+  // what this whole table is for.
+  oak_door: [70, 40, 28],
   oak_stairs: [150, 120, 72],
   oak_slab: [162, 130, 78],
   oak_fence: [150, 120, 72],
@@ -37,7 +41,7 @@ const FAMILIES: Array<[string, Rgb]> = [
   ['_stained_glass', [196, 228, 236]],
   ['_planks', [162, 130, 78]],
   ['_log', [109, 85, 50]],
-  ['_door', [145, 115, 66]],
+  ['_door', [70, 40, 28]],
   ['_stairs', [150, 120, 72]],
   ['_slab', [162, 130, 78]],
   ['_leaves', [72, 118, 48]],

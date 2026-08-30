@@ -20,6 +20,18 @@ describe('block palette', () => {
     expect(colourOf('lime_wool')).toEqual(colourOf('white_wool'))
   })
 
+  it('makes a door stand out from the wall it sits in', () => {
+    // Found by looking at a real render: a door drawn 17/15/12 away from
+    // oak_planks is invisible on a shaded wall, so the front of a house showed
+    // no entrance at all. A door is the most-looked-at feature of a facade —
+    // if the render hides it, the render is not doing its job.
+    const apart = (a: Rgb, b: Rgb): number => Math.max(...[0, 1, 2].map((i) => Math.abs(a[i]! - b[i]!)))
+    expect(apart(colourOf('oak_door'), colourOf('oak_planks')),
+      'a door must be tellable from a plank wall').toBeGreaterThanOrEqual(60)
+    expect(apart(colourOf('oak_door'), colourOf('oak_log')),
+      'and from the log corners beside it').toBeGreaterThanOrEqual(30)
+  })
+
   it('gives an unknown block a neutral grey rather than throwing', () => {
     const c = colourOf('some_block_added_in_a_later_version')
     expect(c).toHaveLength(3)
