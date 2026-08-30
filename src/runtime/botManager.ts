@@ -13,6 +13,8 @@ export type BotLike = EventEmitter & {
   entity?: { position: { x: number; y: number; z: number } }
   health?: number
   food?: number
+  // Present on a real mineflayer bot; the renderer reads the world through it.
+  blockAt?: (pos: { x: number; y: number; z: number }) => { name?: string } | null
   end: (reason?: string) => void
 }
 
