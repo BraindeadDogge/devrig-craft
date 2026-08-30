@@ -40,4 +40,17 @@ describe('collectGrid', () => {
     expect(g).toMatchObject({ sx: 3, sy: 3, sz: 3 })
     expect(blockAtCell(g, 1, 1, 2)).toBe('oak_log') // world (0,0,0) after flooring the centre to (0,0,-1)
   })
+
+  it('indexes all three axes symmetrically with non-zero, different coordinates', () => {
+    // Centre at (10, -4, 7), radius 2: box spans [8..12] x [-6..2] x [5..9]
+    // A block at world (10, -4, 8) should map to grid (2, 2, 3)
+    const asymmetricWorld = {
+      blockAt: (p: { x: number; y: number; z: number }) => {
+        if (p.x === 10 && p.y === -4 && p.z === 8) return { name: 'spruce_log' }
+        return { name: 'air' }
+      },
+    }
+    const g = collectGrid(asymmetricWorld, { x: 10, y: -4, z: 7 }, 2)
+    expect(blockAtCell(g, 2, 2, 3)).toBe('spruce_log')
+  })
 })
