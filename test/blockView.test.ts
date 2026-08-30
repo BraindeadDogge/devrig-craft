@@ -65,4 +65,16 @@ describe('orthographic views', () => {
     const g = grid(1, 2, 1, [[0, 0, 0, 'cobblestone'], [0, 1, 0, 'oak_planks']])
     expect(pixel(renderView(g, 'top', 1), 0, 0)).toEqual([...colourOf('oak_planks')])
   })
+
+  it('mirrors columns between west and east across the same z axis', () => {
+    const g = grid(1, 1, 3, [[0, 0, 0, 'oak_log']]) // a post at the -z end
+    expect(pixel(renderView(g, 'west', 1), 2, 0), 'west sees the -z end on its far column').toEqual([...colourOf('oak_log')])
+    expect(pixel(renderView(g, 'east', 1), 0, 0), 'east sees the same post on the opposite column').toEqual([...colourOf('oak_log')])
+  })
+
+  it('east and west look from opposite ends, seeing different nearest blocks', () => {
+    const g = grid(2, 1, 1, [[0, 0, 0, 'oak_planks'], [1, 0, 0, 'cobblestone']])
+    expect(pixel(renderView(g, 'west', 1), 0, 0), 'west stands at -x, sees the near oak_planks first').toEqual([...colourOf('oak_planks')])
+    expect(pixel(renderView(g, 'east', 1), 0, 0), 'east stands at +x, sees the near cobblestone first').toEqual([...colourOf('cobblestone')])
+  })
 })
