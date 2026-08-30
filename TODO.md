@@ -367,3 +367,8 @@ Still open, all observed in the same run:
   `API Error: The response stopped arriving`. The "one call builds a house"
   pitch and the model's output budget are in direct conflict; splitting the
   fence is the obvious lever and needs the plan author's call.
+- **The isometric painter's order is y-major.** `renderIso` loops `y` outermost,
+  so any block at a higher y paints over every lower one regardless of depth — a
+  tall tower at the back can overwrite a short block in front of it. Correct
+  order sorts by `x + z + y`. Harmless for a one-storey house; visible on tall
+  builds.
