@@ -9,7 +9,7 @@ import { BotManager, type BotFactory, type BotLike } from './runtime/botManager.
 import { executeScript, ScriptError } from './runtime/sandbox.js'
 import { toWire } from './wire.js'
 import { SERVER_NAME, SERVER_VERSION } from './version.js'
-import { collectGrid, type BlockSource } from './render/collect.js'
+import { collectGrid } from './render/collect.js'
 import { renderView, type View } from './render/blockView.js'
 import { encodePng } from './render/png.js'
 
@@ -273,7 +273,7 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
         return err(
           `No ready bot in "${world_name}" (state: ${entry?.state ?? 'none'}). Call craft_join_world, then poll craft_list_bots until state=ready.`,
         )
-      const blockAt = (entry.bot as BotLike & Partial<BlockSource>).blockAt
+      const blockAt = entry.bot.blockAt
       if (typeof blockAt !== 'function')
         return err('this bot cannot read the world (no blockAt) — rejoin with craft_join_world')
 

@@ -1,8 +1,14 @@
+import { Vec3 } from 'vec3'
 import type { BlockGrid } from './blockView.js'
 import { isEmpty } from './palette.js'
 
+/**
+ * The position must be a real Vec3: mineflayer forwards it to prismarine-world,
+ * which calls `pos.floored()`. A structural `{x, y, z}` type-checks but throws
+ * on the first loaded cell, so the parameter is deliberately nominal here.
+ */
 export type BlockSource = {
-  blockAt: (pos: { x: number; y: number; z: number }) => { name?: string } | null
+  blockAt: (pos: Vec3) => { name?: string } | null
 }
 
 /**
@@ -24,7 +30,7 @@ export function collectGrid(
   for (let y = 0; y < side; y++) {
     for (let z = 0; z < side; z++) {
       for (let x = 0; x < side; x++) {
-        const block = bot.blockAt({ x: cx - radius + x, y: cy - radius + y, z: cz - radius + z })
+        const block = bot.blockAt(new Vec3(cx - radius + x, cy - radius + y, cz - radius + z))
         const name = block?.name
         if (isEmpty(name)) continue
         cells[(y * side + z) * side + x] = name as string

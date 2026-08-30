@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { Vec3 } from 'vec3'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
@@ -10,7 +11,7 @@ import type { BotLike } from '../src/runtime/botManager.js'
 import type { DiscoveredWorld } from '../src/discovery/types.js'
 
 class FakeBot extends EventEmitter implements BotLike {
-  entity = { position: { x: 0, y: 64, z: 0 } }
+  entity = { position: new Vec3(0, 64, 0) } // a real bot's position is a Vec3
   health = 20
   food = 20
   lastChat = ''
@@ -20,7 +21,9 @@ class FakeBot extends EventEmitter implements BotLike {
     this.lastChat = text
     this.chats.push(text)
   }
-  blockAt() {
+  blockAt(pos: Vec3) {
+    // A real bot floors the position; a bare {x, y, z} literal would throw here.
+    if (typeof pos?.floored !== 'function') throw new TypeError('pos.floored is not a function')
     return { name: 'stone' }
   }
   end() {
@@ -99,7 +102,7 @@ describe('craft MCP server', () => {
     const joinRes = await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
     expect(text(joinRes)).toContain('127.0.0.1:7777')
     bot.emit('spawn')
-    const res = await exec('print(bot.blockAt().name)')
+    const res = await exec('print(bot.blockAt(bot.entity.position).name)')
     const [first, ...rest] = text(res).split('\n')
     expect(first).toMatch(/^execution_id: [0-9a-f-]{36}$/)
     expect(rest.join('\n')).toBe('stone')
