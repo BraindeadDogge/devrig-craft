@@ -262,7 +262,13 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
           .object({ x: z.number(), y: z.number(), z: z.number() })
           .optional()
           .describe('what to look at; defaults to the bot'),
-        radius: z.number().int().min(1).max(32).optional().describe('half-extent of the box, default 12'),
+        radius: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe('half-extent of the box, default 12; 20 reads 41^3 blocks synchronously'),
         views: z.array(z.enum(VIEWS)).min(1).max(6).optional().describe('default: all four elevations'),
         size: z.number().int().min(1).max(12).optional().describe('pixels per block, default 6'),
       },

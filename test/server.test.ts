@@ -262,12 +262,24 @@ describe('craft MCP server', () => {
 
   it('rejects a render box that would take the process down', async () => {
     await joinAndSpawn()
+    // collectGrid is synchronous on the event loop that keeps the bot's
+    // connection alive: 41^3 cells is the most it may read in one call.
     const tooBig = await client.callTool({
       name: 'craft_take_screenshot',
-      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', radius: 33 },
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', radius: 21 },
     })
     expect(tooBig.isError).toBe(true)
-    expect(text(tooBig)).toContain('less than or equal to 32')
+    expect(text(tooBig)).toContain('less than or equal to 20')
+  })
+
+  it('rejects an oversized pixel size at the schema', async () => {
+    await joinAndSpawn()
+    const tooBig = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', size: 13 },
+    })
+    expect(tooBig.isError).toBe(true)
+    expect(text(tooBig)).toContain('less than or equal to 12')
   })
 
   it('says so plainly when there is no bot to look through', async () => {
