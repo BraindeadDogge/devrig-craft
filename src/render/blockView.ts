@@ -120,8 +120,12 @@ function put(raster: Raster, px: number, py: number, colour: Rgb): void {
 
 function renderIso(grid: BlockGrid, scale: number): Raster {
   const { sx, sy, sz } = grid
+  // A cell's top face is a rhombus 2*scale wide and 2*half tall; neighbours
+  // interlock at half that width, so the canvas is (sx + sz) * scale across.
+  // `half` is rounded up for odd scales, which the height must allow for.
+  const half = Math.max(1, Math.round(scale / 2))
   const width = (sx + sz) * scale
-  const height = Math.round(((sx + sz) * scale) / 2) + sy * scale
+  const height = Math.round(((sx + sz - 2) * scale) / 2) + sy * scale + half * 2
   const raster: Raster = { width, height, rgb: new Uint8Array(width * height * 3) }
   for (let i = 0; i < width * height; i++) {
     raster.rgb[i * 3] = BACKGROUND[0]
@@ -129,7 +133,6 @@ function renderIso(grid: BlockGrid, scale: number): Raster {
     raster.rgb[i * 3 + 2] = BACKGROUND[2]
   }
 
-  const half = Math.max(1, Math.round(scale / 2))
   // Painter's algorithm: far blocks first, so near ones overwrite them. Depth
   // grows with x + z (rightward and toward the viewer) and with height.
   for (let y = 0; y < sy; y++) {
@@ -142,17 +145,24 @@ function renderIso(grid: BlockGrid, scale: number): Raster {
         // origin of this cell's top-face rhombus
         const ox = (x + (sz - 1 - z)) * scale
         const oy = Math.round(((x + z) * scale) / 2) + (sy - 1 - y) * scale
+        // The top face, drawn from its horizontal centre outward and mirrored
+        // about its waist. Every index is an integer: a fractional one lands
+        // nowhere in a Uint8Array, and the face silently disappears.
+        const centre = ox + scale
         for (let row = 0; row < half; row++) {
-          const spread = Math.round(((row + 1) / half) * scale)
+          const spread = Math.max(1, Math.round(((row + 1) / half) * scale))
           for (let col = -spread; col < spread; col++) {
-            put(raster, ox + scale / 2 + col, oy + row, shade(base, TOP_SHADE))
-            put(raster, ox + scale / 2 + col, oy + half * 2 - 1 - row, shade(base, TOP_SHADE))
+            put(raster, centre + col, oy + row, shade(base, TOP_SHADE))
+            put(raster, centre + col, oy + half * 2 - 1 - row, shade(base, TOP_SHADE))
           }
         }
-        for (let row = 0; row < scale; row++) {
-          for (let col = 0; col < scale / 2; col++) {
-            put(raster, ox + col, oy + half + row + Math.round(col / 2), shade(base, LEFT_SHADE))
-            put(raster, ox + scale - 1 - col, oy + half + row + Math.round(col / 2), shade(base, RIGHT_SHADE))
+        // The two visible sides hang below the rhombus's lower edges, each one
+        // scale wide, so together they span the same width as the top face.
+        for (let col = 0; col < scale; col++) {
+          const drop = Math.round(((col + 1) / scale) * half)
+          for (let row = 0; row < scale; row++) {
+            put(raster, ox + col, oy + half + drop + row, shade(base, LEFT_SHADE))
+            put(raster, ox + scale * 2 - 1 - col, oy + half + drop + row, shade(base, RIGHT_SHADE))
           }
         }
       }

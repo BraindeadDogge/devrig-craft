@@ -87,21 +87,40 @@ describe('isometric view', () => {
     expect(r.height).toBe(((2 + 2) * 4) / 2 + 3 * 4)
   })
 
-  it('draws the top of a block brighter than its sides, so the form reads', () => {
-    const g = grid(1, 1, 1, [[0, 0, 0, 'oak_planks']])
-    const r = renderView(g, 'iso', 8)
-    const seen = new Set<string>()
-    for (let py = 0; py < r.height; py++)
-      for (let px = 0; px < r.width; px++) seen.add(pixel(r, px, py).join(','))
-    // background plus three distinct face shades
-    expect(seen.size).toBeGreaterThanOrEqual(4)
-  })
+  // Every size the schema permits, because odd scales used to drop the top
+  // face entirely: `ox + scale / 2` is fractional, and a fractional index into
+  // a Uint8Array writes nowhere at all.
+  for (const scale of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+    it(`draws top, left and right faces at scale ${scale}`, () => {
+      const g = grid(1, 1, 1, [[0, 0, 0, 'oak_planks']])
+      const r = renderView(g, 'iso', scale)
+      const seen = new Set<string>()
+      for (let py = 0; py < r.height; py++)
+        for (let px = 0; px < r.width; px++) seen.add(pixel(r, px, py).join(','))
+      seen.delete([...BACKGROUND].join(','))
+      const faces = [...seen].map((c) => c.split(',').map(Number) as [number, number, number])
+      expect(faces, 'three face shades, none of them the sky').toHaveLength(3)
+      // The lit top face keeps the block's own colour; the two sides are
+      // darker, and darker by different amounts, or the form does not read.
+      const top = [...colourOf('oak_planks')]
+      expect(faces.map((f) => f.join(',')), 'the top face is the undimmed colour').toContain(top.join(','))
+      const reds = faces.map((f) => f[0]).sort((a, b) => b - a)
+      expect(reds[0]).toBe(top[0])
+      expect(reds[1]!).toBeLessThan(reds[0]!)
+      expect(reds[2]!).toBeLessThan(reds[1]!)
+    })
+  }
 
   it('lets a nearer block cover one behind it', () => {
-    const behind = grid(2, 1, 2, [[0, 0, 0, 'cobblestone']])
-    const both = grid(2, 1, 2, [[0, 0, 0, 'cobblestone'], [1, 0, 1, 'oak_planks']])
-    const a = renderView(behind, 'iso', 6)
-    const b = renderView(both, 'iso', 6)
-    expect(Buffer.from(b.rgb).equals(Buffer.from(a.rgb))).toBe(false)
+    // (1,1,1) sits exactly on top of (0,0,0) on screen: same column, same row.
+    const behind = grid(2, 2, 2, [[0, 0, 0, 'cobblestone']])
+    const both = grid(2, 2, 2, [[0, 0, 0, 'cobblestone'], [1, 1, 1, 'oak_planks']])
+    const scale = 6
+    const a = renderView(behind, 'iso', scale)
+    const b = renderView(both, 'iso', scale)
+    // the middle of the shared top face — the far block owns it alone, then loses it
+    const px = 1 * scale + scale, py = Math.round((2 * scale) / 2) + 1
+    expect(pixel(a, px, py), 'the far block alone').toEqual([...colourOf('cobblestone')])
+    expect(pixel(b, px, py), 'the near block paints over it').toEqual([...colourOf('oak_planks')])
   })
 })
