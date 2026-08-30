@@ -7,7 +7,7 @@ export type BlockGrid = {
   /** Indexed by cellIndex(); null means empty. */
   cells: ReadonlyArray<string | null>
 }
-export type View = 'north' | 'south' | 'east' | 'west' | 'top'
+export type View = 'north' | 'south' | 'east' | 'west' | 'top' | 'iso'
 export type Raster = { width: number; height: number; rgb: Uint8Array }
 
 /** A pale sky, so a dark building still has a silhouette against it. */
@@ -53,6 +53,9 @@ function rayFor(grid: BlockGrid, view: View): Ray {
     // Straight down: x across, z down the image, y from the top.
     case 'top':
       return { width: sx, height: sz, depth: sy, sample: (c, r, d) => ({ x: c, y: sy - 1 - d, z: r }) }
+    // renderView delegates to renderIso before this helper is ever called.
+    case 'iso':
+      throw new Error("rayFor has no orthographic ray for 'iso'")
   }
 }
 
@@ -71,6 +74,7 @@ function shade(colour: Rgb, factor: number): Rgb {
  * of the same building comparable.
  */
 export function renderView(grid: BlockGrid, view: View, scale: number): Raster {
+  if (view === 'iso') return renderIso(grid, scale)
   const ray = rayFor(grid, view)
   const width = ray.width * scale
   const height = ray.height * scale
@@ -98,4 +102,61 @@ export function renderView(grid: BlockGrid, view: View, scale: number): Raster {
     }
   }
   return { width, height, rgb }
+}
+
+// A 2:1 isometric cell: the top face is a rhombus scale wide and scale/2 tall,
+// with the two visible sides hanging below it.
+const TOP_SHADE = 1.0
+const LEFT_SHADE = 0.8
+const RIGHT_SHADE = 0.62
+
+function put(raster: Raster, px: number, py: number, colour: Rgb): void {
+  if (px < 0 || py < 0 || px >= raster.width || py >= raster.height) return
+  const at = (py * raster.width + px) * 3
+  raster.rgb[at] = colour[0]
+  raster.rgb[at + 1] = colour[1]
+  raster.rgb[at + 2] = colour[2]
+}
+
+function renderIso(grid: BlockGrid, scale: number): Raster {
+  const { sx, sy, sz } = grid
+  const width = (sx + sz) * scale
+  const height = Math.round(((sx + sz) * scale) / 2) + sy * scale
+  const raster: Raster = { width, height, rgb: new Uint8Array(width * height * 3) }
+  for (let i = 0; i < width * height; i++) {
+    raster.rgb[i * 3] = BACKGROUND[0]
+    raster.rgb[i * 3 + 1] = BACKGROUND[1]
+    raster.rgb[i * 3 + 2] = BACKGROUND[2]
+  }
+
+  const half = Math.max(1, Math.round(scale / 2))
+  // Painter's algorithm: far blocks first, so near ones overwrite them. Depth
+  // grows with x + z (rightward and toward the viewer) and with height.
+  for (let y = 0; y < sy; y++) {
+    for (let d = 0; d <= sx + sz - 2; d++) {
+      for (let x = Math.max(0, d - sz + 1); x <= Math.min(sx - 1, d); x++) {
+        const z = d - x
+        const name = blockAtCell(grid, x, y, z)
+        if (isEmpty(name)) continue
+        const base = colourOf(name as string)
+        // origin of this cell's top-face rhombus
+        const ox = (x + (sz - 1 - z)) * scale
+        const oy = Math.round(((x + z) * scale) / 2) + (sy - 1 - y) * scale
+        for (let row = 0; row < half; row++) {
+          const spread = Math.round(((row + 1) / half) * scale)
+          for (let col = -spread; col < spread; col++) {
+            put(raster, ox + scale / 2 + col, oy + row, shade(base, TOP_SHADE))
+            put(raster, ox + scale / 2 + col, oy + half * 2 - 1 - row, shade(base, TOP_SHADE))
+          }
+        }
+        for (let row = 0; row < scale; row++) {
+          for (let col = 0; col < scale / 2; col++) {
+            put(raster, ox + col, oy + half + row + Math.round(col / 2), shade(base, LEFT_SHADE))
+            put(raster, ox + scale - 1 - col, oy + half + row + Math.round(col / 2), shade(base, RIGHT_SHADE))
+          }
+        }
+      }
+    }
+  }
+  return raster
 }

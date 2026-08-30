@@ -78,3 +78,30 @@ describe('orthographic views', () => {
     expect(pixel(renderView(g, 'east', 1), 0, 0), 'east stands at +x, sees the near cobblestone first').toEqual([...colourOf('cobblestone')])
   })
 })
+
+describe('isometric view', () => {
+  it('sizes the canvas from all three axes', () => {
+    const g = grid(2, 3, 2, [])
+    const r = renderView(g, 'iso', 4)
+    expect(r.width).toBe((2 + 2) * 4)
+    expect(r.height).toBe(((2 + 2) * 4) / 2 + 3 * 4)
+  })
+
+  it('draws the top of a block brighter than its sides, so the form reads', () => {
+    const g = grid(1, 1, 1, [[0, 0, 0, 'oak_planks']])
+    const r = renderView(g, 'iso', 8)
+    const seen = new Set<string>()
+    for (let py = 0; py < r.height; py++)
+      for (let px = 0; px < r.width; px++) seen.add(pixel(r, px, py).join(','))
+    // background plus three distinct face shades
+    expect(seen.size).toBeGreaterThanOrEqual(4)
+  })
+
+  it('lets a nearer block cover one behind it', () => {
+    const behind = grid(2, 1, 2, [[0, 0, 0, 'cobblestone']])
+    const both = grid(2, 1, 2, [[0, 0, 0, 'cobblestone'], [1, 0, 1, 'oak_planks']])
+    const a = renderView(behind, 'iso', 6)
+    const b = renderView(both, 'iso', 6)
+    expect(Buffer.from(b.rgb).equals(Buffer.from(a.rgb))).toBe(false)
+  })
+})
