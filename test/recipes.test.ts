@@ -546,4 +546,13 @@ describe('recipe corpus', () => {
     }
     expect(index).toContain('no `require`')
   })
+
+  it('the index tells the agent to look at what it built', async () => {
+    // Every defect found on 2026-08-29 was found by a human looking at the
+    // world and saying so. A verdict of "done" that was never looked at is
+    // exactly the failure this step exists to prevent.
+    const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
+    expect(index).toContain('craft_take_screenshot')
+    expect(index).toMatch(/look at (them|the)/i)
+  })
 })

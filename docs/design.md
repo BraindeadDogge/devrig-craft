@@ -165,6 +165,11 @@ reason; it cannot act on an unexplained queue delay).
 - Output is the only feedback channel: verification recipes teach
   `bot.blockAt(...)` sweeps ("assert the wall exists") — verify via
   API, not pixels; screenshots are for the human/final reveal.
+  Refined 2026-08-29: the API remains the only judge of
+  **correctness** — no placement is ever confirmed by looking at a
+  picture. Pixels answer a question the API cannot: whether the
+  result looks like the building it was meant to be. See
+  `docs/superpowers/specs/2026-08-29-seeing-and-planning-design.md`.
 - **Human placement contract (2026-08-28):** the runtime wraps
   `bot.placeBlock`/`bot.dig` on the injected bot: the head turns
   smoothly to face the target before the action; targets beyond arm's
@@ -294,3 +299,8 @@ cheats").
   tool ships its tested guidance-error branch only; verification is
   `bot.blockAt` sweeps and the human watches first-person. Revisit only
   if a demo genuinely needs agent-side vision.
+  Reversed 2026-08-29, without reversing the reasoning. headless-gl
+  really was unreliable, so the success path that shipped uses no GL:
+  an orthographic projection computed from `bot.blockAt` and encoded
+  as PNG over `node:zlib`. No native dependency, deterministic output,
+  and it shows the whole building rather than one wall.

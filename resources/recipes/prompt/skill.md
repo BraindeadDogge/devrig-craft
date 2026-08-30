@@ -93,3 +93,10 @@ body of an async function, so top-level `await` is expected.
    altitude first: solid ground more than 1 block below feet → `/tp` down).
    The house recipe's `ensureMobile` does both checks in ~2 seconds. Never
    spend minutes diagnosing movement while the human watches a statue.
+11. **Look at what you built before you call it done.** When the build stands,
+   `craft_take_screenshot` it from all four sides and from above, and look at them.
+   Compare the pictures against what you set out to build. Then say
+   plainly whether it is right — and if it is not, name what is wrong and fix
+   it. A verdict you did not look at is not a verdict. Correctness is still
+   the `bot.blockAt` sweep's job; the pictures answer a different question,
+   which is whether it looks like the thing you meant to build.

@@ -2,6 +2,16 @@
 
 Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
 
+## Screenshot success path — shipped 2026-08-30
+
+~~`craft_take_screenshot` ships error-branch only (M2 Task 2 descope, see
+`docs/design.md` §13)~~ — a success path landed instead: a bounded
+`bot.blockAt` cube, projected orthographically and encoded to PNG over
+`node:zlib`, no GL and no native dependency. `docs/design.md` §13 and §6
+record the reversal and the refinement; `resources/recipes/prompt/skill.md`
+rule 11 now tells the agent to look at the pictures before calling a build
+done.
+
 ## M3 input: manual demo numbers (2026-08-28, M2 sign-off)
 
 Live run against a vanilla 1.21.4 Prism world (Open to LAN, cheats on),
