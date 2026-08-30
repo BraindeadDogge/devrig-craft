@@ -9,6 +9,9 @@ import { BotManager, type BotFactory, type BotLike } from './runtime/botManager.
 import { executeScript, ScriptError } from './runtime/sandbox.js'
 import { toWire } from './wire.js'
 import { SERVER_NAME, SERVER_VERSION } from './version.js'
+import { collectGrid, type BlockSource } from './render/collect.js'
+import { renderView, type View } from './render/blockView.js'
+import { encodePng } from './render/png.js'
 
 export type CraftServerDeps = {
   /** Fresh discovery snapshot per call — compose buildSnapshot + real sources in the CLI. */
@@ -242,23 +245,64 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
     },
   )
 
+  const VIEWS = ['north', 'south', 'east', 'west', 'top', 'iso'] as const
+
   server.registerTool(
     'craft_take_screenshot',
     {
       description:
-        'HEAVY ENDPOINT: render the bot POV. Not available on this install (headless GL) — for ' +
-        'verification use craft_execute_code with bot.blockAt sweeps ' +
-        '(mcp-craft://skill/world-queries); the human watches the world first-person anyway.',
+        'Render the build from block data as PNG — four elevations, straight down, and isometric. ' +
+        'Use it to judge how the build LOOKS once it stands; for whether a block actually landed, ' +
+        'a bot.blockAt sweep is still the answer (mcp-craft://skill/world-queries).',
       inputSchema: {
         world_name: z.string().max(256),
         task_id: z.string().max(256),
         reason: z.string().max(4096),
+        center: z
+          .object({ x: z.number(), y: z.number(), z: z.number() })
+          .optional()
+          .describe('what to look at; defaults to the bot'),
+        radius: z.number().int().min(1).max(32).optional().describe('half-extent of the box, default 12'),
+        views: z.array(z.enum(VIEWS)).min(1).max(6).optional().describe('default: all four elevations'),
+        size: z.number().int().min(1).max(12).optional().describe('pixels per block, default 6'),
       },
     },
-    async () =>
-      err(
-        'screenshot rendering is not available on this install — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway',
-      ),
+    async ({ world_name, task_id, reason, center, radius, views, size }) => {
+      const entry = bots.get(world_name)
+      if (!entry || entry.state !== 'ready')
+        return err(
+          `No ready bot in "${world_name}" (state: ${entry?.state ?? 'none'}). Call craft_join_world, then poll craft_list_bots until state=ready.`,
+        )
+      const blockAt = (entry.bot as BotLike & Partial<BlockSource>).blockAt
+      if (typeof blockAt !== 'function')
+        return err('this bot cannot read the world (no blockAt) — rejoin with craft_join_world')
+
+      const centre = center ?? entry.bot.entity?.position
+      if (!centre) return err('the bot has no position yet — poll craft_list_bots until state=ready')
+
+      const r = radius ?? 12
+      const scale = size ?? 6
+      const wanted: View[] = views ?? ['north', 'east', 'south', 'west']
+      say(entry.bot, `[devrig] ${reason}`)
+      console.error(`craft_take_screenshot task=${task_id} world=${world_name} r=${r} views=${wanted.join(',')}`)
+
+      const grid = collectGrid({ blockAt }, centre, r)
+      const images = wanted.map((view) => {
+        const raster = renderView(grid, view, scale)
+        return {
+          type: 'image' as const,
+          data: encodePng(raster.width, raster.height, raster.rgb).toString('base64'),
+          mimeType: 'image/png' as const,
+        }
+      })
+      const at = `${Math.floor(centre.x)}, ${Math.floor(centre.y)}, ${Math.floor(centre.z)}`
+      return {
+        content: [
+          { type: 'text' as const, text: `${wanted.join(', ')} — a ${r * 2 + 1} block cube centred on (${at}), ${scale}px per block` },
+          ...images,
+        ],
+      }
+    },
   )
 
   server.registerTool(

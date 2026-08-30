@@ -238,13 +238,41 @@ describe('craft MCP server', () => {
     expect(bot.chats.some((c) => c.startsWith('[devrig] hit a snag:'))).toBe(true)
   })
 
-  it('screenshot returns the M1 guidance error', async () => {
+  it('renders the world around the bot as PNG images', async () => {
     await joinAndSpawn()
-    const res = await client.callTool({
+    const shot = await client.callTool({
       name: 'craft_take_screenshot',
-      arguments: { world_name: 'test-world', task_id: 't', reason: 'r' },
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'checking the build',
+                   radius: 2, views: ['north', 'top'], size: 2 },
     })
-    expect(res.isError).toBe(true)
-    expect(text(res)).toContain('blockAt')
+    expect(shot.isError).toBeFalsy()
+    const content = shot.content as Array<{ type: string; data?: string; mimeType?: string; text?: string }>
+    const images = content.filter((c) => c.type === 'image')
+    expect(images).toHaveLength(2)
+    for (const image of images) {
+      expect(image.mimeType).toBe('image/png')
+      const png = Buffer.from(image.data!, 'base64')
+      expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    }
+    expect(content.find((c) => c.type === 'text')?.text).toContain('north')
+  })
+
+  it('rejects a render box that would take the process down', async () => {
+    await joinAndSpawn()
+    const tooBig = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', radius: 33 },
+    })
+    expect(tooBig.isError).toBe(true)
+    expect(text(tooBig)).toContain('less than or equal to 32')
+  })
+
+  it('says so plainly when there is no bot to look through', async () => {
+    const shot = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'nowhere', task_id: 't', reason: 'r' },
+    })
+    expect(shot.isError).toBe(true)
+    expect(text(shot)).toContain('craft_join_world')
   })
 })
