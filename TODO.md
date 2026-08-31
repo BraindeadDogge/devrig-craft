@@ -2,6 +2,22 @@
 
 Follow-ups found while implementing the M1 discovery, recipe and CI tasks.
 
+## Open after the house recipe became a design guide (2026-08-31)
+
+- **The worked house plan has never been built.** `resources/recipes/skill/house.md`
+  now carries the oak starter house as a `LEGEND`/`PLAN`, transcribed cell for
+  cell from the predicates the old script used (a test checks the grid and the
+  legend agree; nothing has run it against a world). First live run should
+  confirm the door's two cells, the furniture spaces, and that ~200 placements
+  really do need two calls.
+- **`ensureMobile` moved into `blueprint.md`'s build fence**, so the `/tp`-on-camera
+  concern logged below now lives in the engine rather than the house recipe.
+  Its teleport target also changed by one block with the y0 convention
+  (layer 0 sits ON BASE), which no test can catch — it needs a live look.
+- **The engine now removes its own survival scaffolding** (top down, from
+  beside each pillar, skipping any cell the plan wants filled). Never run in
+  survival; in creative `raiseTo` flies and the loop is a no-op.
+
 ## Screenshot success path — shipped 2026-08-30
 
 ~~`craft_take_screenshot` ships error-branch only (M2 Task 2 descope, see
