@@ -17,6 +17,7 @@ right few lines of mineflayer, and that is what the articles below teach.
 | URI | What it covers |
 |---|---|
 | `mcp-craft://skill/house` | **Building a house? Start HERE.** A complete, tuned one-call build: walls, windows, gable roof, furniture, door — copy, set BASE, run. |
+| `mcp-craft://skill/blueprint` | The plan format — `LEGEND` + `PLAN` as data, not a script — and the engine that builds and verifies from it, starting with `renderPlan` to show the plan before anything is placed. |
 | `mcp-craft://skill/building` | Placement fundamentals: the place loop, reach, occupied cells, verification. Read when the house recipe does not fit the request. |
 | `mcp-craft://skill/building-with-commands` | `/fill`, `/setblock` and `/give` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
 | `mcp-craft://skill/world-queries` | `blockAt`, `findBlocks`, entity queries, and **the verification pattern** — how to prove what you built is actually there. |

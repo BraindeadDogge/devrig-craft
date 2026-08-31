@@ -46,11 +46,12 @@ const jsFences = (md: string): string[] =>
   [...md.matchAll(/```js\n([\s\S]*?)```/g)].map((m) => m[1]!)
 
 describe('recipe corpus', () => {
-  it('ships the 8 articles (M1 + M2)', async () => {
+  it('ships the 10 articles (M1 + M2 + blueprint)', async () => {
     const paths = (await allArticles()).map((a) => a.path).sort()
     expect(paths).toEqual(
       [
         'prompt/skill.md',
+        'skill/blueprint.md',
         'skill/building-with-commands.md',
         'skill/building.md',
         'skill/design-philosophy.md',
@@ -563,5 +564,30 @@ describe('recipe corpus', () => {
       index,
       'tells the agent to state a verdict and fix what is wrong',
     ).toMatch(/say plainly whether it is right.{0,120}name what is wrong and fix it/i)
+  })
+
+  it('ships the blueprint article and lists it in the index', async () => {
+    const paths = (await allArticles()).map((a) => a.path)
+    expect(paths).toContain('skill/blueprint.md')
+    const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
+    expect(index).toContain('mcp-craft://skill/blueprint')
+  })
+
+  it('the blueprint article states the three plan characters', async () => {
+    // A plan is only unambiguous if every character has exactly one meaning.
+    // These three are the whole grammar; if the article does not pin them, two
+    // readers will disagree about what a blank cell means.
+    const blueprint = await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')
+    const flat = blueprint.replace(/\s+/g, ' ')
+    expect(flat, 'a legend character means the block belongs there').toMatch(/legend character/i)
+    expect(flat, "'.' must mean the cell has to be empty").toMatch(/`\.`[^`]{0,80}empty/i)
+    expect(flat, 'a space must mean leave it alone').toMatch(/space[^`]{0,80}(leave|not mine|not yours)/i)
+  })
+
+  it('renderPlan shows the plan before anything is placed', async () => {
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
+    const all = fences.join('\n')
+    expect(all, 'the engine must be able to show its intent').toContain('function renderPlan')
+    expect(all, 'and it prints rather than returning a blob').toMatch(/renderPlan[\s\S]{0,900}print\(/)
   })
 })
