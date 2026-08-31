@@ -16,8 +16,8 @@ right few lines of mineflayer, and that is what the articles below teach.
 
 | URI | What it covers |
 |---|---|
-| `mcp-craft://skill/house` | **Building a house? Start HERE.** A complete, tuned one-call build: walls, windows, gable roof, furniture, door — copy, set BASE, run. |
-| `mcp-craft://skill/blueprint` | The plan format — `LEGEND` + `PLAN` as data, not a script — and the engine that builds and verifies from it, starting with `renderPlan` to show the plan before anything is placed. |
+| `mcp-craft://skill/house` | **Building a house? Start HERE.** The design guide — proportions, windows on every side, roof pitch, interior, the measured facts — plus one worked `PLAN` for the oak starter house, ready to hand to the engine. |
+| `mcp-craft://skill/blueprint` | The plan format — `LEGEND` + `PLAN` as data, not a script — and the engine that builds and verifies from it, starting with `renderPlan` to show the plan before anything is placed. **Read this before you build anything.** |
 | `mcp-craft://skill/building` | Placement fundamentals: the place loop, reach, occupied cells, verification. Read when the house recipe does not fit the request. |
 | `mcp-craft://skill/building-with-commands` | `/fill`, `/setblock` and `/give` via chat when cheats are on — the fast path for large builds, and how to detect that it is available. |
 | `mcp-craft://skill/world-queries` | `blockAt`, `findBlocks`, entity queries, and **the verification pattern** — how to prove what you built is actually there. |
@@ -74,10 +74,14 @@ body of an async function, so top-level `await` is expected.
    the plan, each milestone, the verification verdict. Think out loud, keep
    each line under ~200 chars, and never go silent for more than a phase —
    the running commentary is half the show.
-7. **Do not compose long scripts from scratch — thinking time is frozen-bot
-   time.** The articles carry complete, tuned fences (the house build is one
-   call, `mcp-craft://skill/house`): copy, set the parameters, run. Send the
-   first script within seconds of joining; adapt afterwards.
+7. **State the shape as a plan first, then paste the engine — do not compose a
+   long script from scratch.** Thinking time is frozen-bot time, and a script
+   whose shape lives in its control flow cannot be shown to the human, varied
+   on request, or diffed against the world afterwards. So: write a `LEGEND` and
+   a `PLAN` (`mcp-craft://skill/blueprint`; `mcp-craft://skill/house` has a
+   worked one for a house), show it with `renderPlan`, build it with
+   `buildPlan`, then `verifyPlan`. Copy those fences; do not rewrite them.
+   Send the first script within seconds of joining; adapt afterwards.
 8. **Movement that hangs:** never `bot.creative.flyTo`, never a `goto` while
    flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
    and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.

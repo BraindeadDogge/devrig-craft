@@ -49,6 +49,24 @@ const jsFences = (md: string): string[] =>
 // build fence now (house.md is a design guide with a worked plan). Every lesson
 // pinned through this helper was paid for in a live world against the house
 // recipe — the code moved, so the pin moves with it rather than being deleted.
+// A worked example is what a reader copies, so it has to be right. Parse the
+// literals out of the article and run them rather than grepping at the text.
+function workedPlan(md: string): {
+  LEGEND: Record<string, string>
+  PLAN: Array<{ y: number; rows: string[] }>
+} {
+  const fence = jsFences(md).find((f) => /^const LEGEND = /m.test(f))
+  expect(fence, 'the article must declare its worked example in a js fence').toBeDefined()
+  const legendSrc = /^const LEGEND = \{.*\}$/m.exec(fence!)
+  const planSrc = /^const PLAN = \[[\s\S]*?^\]$/m.exec(fence!)
+  expect(legendSrc, 'the example must declare a LEGEND literal').not.toBeNull()
+  expect(planSrc, 'the example must declare a PLAN literal').not.toBeNull()
+  return new Function(`${legendSrc![0]}\n${planSrc![0]}\nreturn { LEGEND, PLAN }`)() as {
+    LEGEND: Record<string, string>
+    PLAN: Array<{ y: number; rows: string[] }>
+  }
+}
+
 async function engineFence(): Promise<string> {
   const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
   const build = fences.find((f) => f.includes('async function buildPlan'))
@@ -341,9 +359,15 @@ describe('recipe corpus', () => {
   it('the bed has a fallback, because placeBlock cannot seat one on 1.21.4', async () => {
     // Refused from four positions and facings, always as a silent no-op.
     // Reporting "bed refused" and moving on leaves the house without a bed.
-    const fences = jsFences(await readFile(`${RECIPES}/skill/house.md`, 'utf8'))
-    expect(fences[1], 'the bed must have a documented fallback').toContain('setblock')
-    expect(fences[1], 'and must say which way it went in').toContain('bed by command')
+    // A two-cell block is not something a plan can express either, so this
+    // lesson is now house.md's prose rather than a fence — but it still has to
+    // be written down somewhere, or the next model rediscovers it the hard way.
+    const flat = (await readFile(`${RECIPES}/skill/house.md`, 'utf8')).replace(/\s+/g, ' ')
+    expect(flat, 'the article must say placeBlock cannot seat a bed here').toMatch(
+      /bed[^.]{0,200}(placeBlock|by hand)/i,
+    )
+    expect(flat, 'and must give the command that does work').toContain('setblock')
+    expect(flat, 'naming the version it was measured on').toContain('1.21.4')
   })
 
   it('reaches height by flying in creative, and keeps the pillar for survival', async () => {
@@ -488,9 +512,20 @@ describe('recipe corpus', () => {
     expect(direct, 'direct first, climb second').toBeLessThan(cruise)
   })
 
-  it('the house verify fence demands a real door and does not accept a hole', async () => {
+  it('the worked house plan puts a real door in the wall, and never a hole', async () => {
+    // The old verify fence accepted 'oak_door|air' for the door cell, which
+    // passes an open doorway off as a house. A plan cannot make that mistake by
+    // accident — a cell is a legend character or '.', never both — but it can
+    // still be drawn with no door at all, so check the example itself.
     const house = await readFile(`${RECIPES}/skill/house.md`, 'utf8')
-    expect(house).not.toContain('oak_door|air')
+    expect(house, 'never accept a hole where the door goes').not.toContain('oak_door|air')
+    const { LEGEND, PLAN } = workedPlan(house)
+    const doorChars = Object.entries(LEGEND)
+      .filter(([, mat]) => mat === 'oak_door')
+      .map(([ch]) => ch)
+    expect(doorChars, 'the legend must name a door').toHaveLength(1)
+    const used = new Set(PLAN.flatMap((l) => l.rows.join('').split('')))
+    expect(used.has(doorChars[0]!), 'and the plan must actually place it').toBe(true)
   })
 
   it('no house fence announces a finished house — only the verify verdict may', async () => {
@@ -499,6 +534,46 @@ describe('recipe corpus', () => {
       const claim = /bot\.chat\([^\n]*(House done|house is done|finished the house)/i
       expect(claim.test(fence), `house fence #${i} claims completion in chat`).toBe(false)
     }
+  })
+
+  it('house.md is a design guide with a worked plan, not a script', async () => {
+    const house = await readFile(`${RECIPES}/skill/house.md`, 'utf8')
+    const fences = jsFences(house)
+    expect(fences.join('\n'), 'the house is expressed as a plan').toContain('const PLAN')
+    expect(fences.join('\n'), 'with a legend').toContain('const LEGEND')
+    for (const dead of ['isRing', 'isCorner', 'isWindow', 'wantAt'])
+      expect(fences.join('\n'), `${dead} was the old hardcoded shape`).not.toContain(dead)
+  })
+
+  it('house.md keeps the design knowledge a plan cannot carry', async () => {
+    const flat = (await readFile(`${RECIPES}/skill/house.md`, 'utf8')).replace(/\s+/g, ' ')
+    expect(flat, 'where the door goes').toMatch(/door/i)
+    expect(flat, 'windows on every side').toMatch(/window/i)
+    expect(flat, 'wall torches, not floor spam').toMatch(/torch/i)
+    expect(flat, 'the bed cannot be placed by hand on this version').toMatch(/setblock|by command/i)
+  })
+
+  it('the worked plan is well formed', async () => {
+    // A ragged plan builds a ragged house, and the engine only warns about it.
+    const house = await readFile(`${RECIPES}/skill/house.md`, 'utf8')
+    const rows = [...house.matchAll(/rows:\s*\[([^\]]*)\]/g)].map((m) =>
+      [...m[1]!.matchAll(/'([^']*)'/g)].map((r) => r[1]!),
+    )
+    expect(rows.length, 'the plan must have layers').toBeGreaterThan(2)
+    const widths = new Set(rows.flat().map((r) => r.length))
+    const depths = new Set(rows.map((r) => r.length))
+    expect(widths.size, `rows must all be the same width, got ${[...widths]}`).toBe(1)
+    expect(depths.size, `layers must all have the same depth, got ${[...depths]}`).toBe(1)
+  })
+
+  it('the index sends a house request through the plan, not through a script', async () => {
+    // The house row used to promise a script to copy and run. It is a design
+    // guide now: the model authors a plan and the engine builds it, so the
+    // index has to say that or the model looks for a fence that is not there.
+    const index = (await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')).replace(/\s+/g, ' ')
+    const row = /\| `mcp-craft:\/\/skill\/house` \|([^|]*)\|/.exec(index)
+    expect(row, 'the index must still carry a house row').not.toBeNull()
+    expect(row![1], 'and it must describe a plan, not a ready-made script').toMatch(/plan/i)
   })
 
   it('the index lists every skill URI and the scope contract', async () => {
@@ -568,23 +643,24 @@ describe('recipe corpus', () => {
     // legend line; a row character with no legend entry is a cell that cannot
     // be built at all. renderPlan warns about the second at runtime and says
     // nothing about the first, so the example itself has to be right.
-    const fence = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))[0]!
-    const legendSrc = /^const LEGEND = \{.*\}$/m.exec(fence)
-    const planSrc = /^const PLAN = \[[\s\S]*?^\]$/m.exec(fence)
-    expect(legendSrc, 'the example must declare a LEGEND literal').not.toBeNull()
-    expect(planSrc, 'the example must declare a PLAN literal').not.toBeNull()
-    const { LEGEND, PLAN } = new Function(
-      `${legendSrc![0]}\n${planSrc![0]}\nreturn { LEGEND, PLAN }`,
-    )() as { LEGEND: Record<string, string>; PLAN: Array<{ y: number; rows: string[] }> }
-
-    const used = new Set(
-      PLAN.flatMap((l) => l.rows.join('').split('')).filter((c) => c !== '.' && c !== ' '),
-    )
-    const declared = new Set(Object.keys(LEGEND))
-    const unused = [...declared].filter((c) => !used.has(c))
-    const undeclared = [...used].filter((c) => !declared.has(c))
-    expect(unused, `LEGEND declares ${unused.join(', ')} but no row uses it`).toEqual([])
-    expect(undeclared, `rows use ${undeclared.join(', ')} with no LEGEND entry`).toEqual([])
+    // Both articles carry a worked example — blueprint's toy shed and house.md's
+    // oak starter house — and a reader is as likely to copy one as the other.
+    for (const article of ['skill/blueprint.md', 'skill/house.md']) {
+      const { LEGEND, PLAN } = workedPlan(await readFile(`${RECIPES}/${article}`, 'utf8'))
+      const used = new Set(
+        PLAN.flatMap((l) => l.rows.join('').split('')).filter((c) => c !== '.' && c !== ' '),
+      )
+      const declared = new Set(Object.keys(LEGEND))
+      const unused = [...declared].filter((c) => !used.has(c))
+      const undeclared = [...used].filter((c) => !declared.has(c))
+      expect(unused, `${article}: LEGEND declares ${unused.join(', ')} but no row uses it`).toEqual(
+        [],
+      )
+      expect(
+        undeclared,
+        `${article}: rows use ${undeclared.join(', ')} with no LEGEND entry`,
+      ).toEqual([])
+    }
   })
 
   it('the worked example is a rectangular grid, as the article demands of any plan', async () => {
