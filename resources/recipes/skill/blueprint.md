@@ -23,6 +23,18 @@ Each character in a row means exactly one of three things:
   cell.
 - **`.` means this cell must be empty.** Nothing goes here — if the build
   finds a block occupying it, that is a defect to clear, not a cell to skip.
+  **Exception:** a block with no collision shape at all — `torch`,
+  `wall_torch`, `short_grass`, `tall_grass`, `*_button`, `*_pressure_plate`,
+  `snow`, signs, vines, most flowers — cannot actually be cleared by the
+  engine. The runtime's dig gate ray-casts against the same empty collision
+  shape the engine would ray-cast against to stand beside it, so there is no
+  angle from which the block is "seen" and `bot.dig` is refused before the
+  engine ever gets to try. The build reports this as a bump
+  (`'nowhere to stand beside the cell I must dig'`), not a false "already
+  clear" — but the cell stays occupied, and `verifyPlan` will keep reporting
+  it wrong. Keep `.` cells clear of these in practice (do not place a torch
+  where a later layer's `.` will want it gone); the format cannot promise to
+  undo that placement for you.
 - **A space means not mine — leave whatever is there and do not report on
   it.** A blank cell is outside the plan's authority: do not place into it,
   do not dig it out, and do not flag it as wrong during verification. This
@@ -656,11 +668,17 @@ async function standBeside(pos) {
   return false
 }
 // Judge occupancy by NAME, not by boundingBox: a torch, carpet, button,
-// pressure plate or tall grass has boundingBox 'empty', same as true air, but
-// is a real block that bot.dig can still break. Testing boundingBox here is
-// what let a '.' cell hold one of these forever — verifyPlan (which already
-// judges by name) kept reporting it wrong, and this function kept saying
-// "nothing to dig".
+// pressure plate or tall grass has boundingBox 'empty', same as true air, so
+// testing boundingBox here silently treated "occupied by one of these" as
+// "nothing to dig" — the same blind spot verifyPlan (which judges by name)
+// does not have, so it kept reporting the cell wrong forever. Judging by
+// name at least makes this function ATTEMPT the dig instead of lying that
+// it is already clear. It does not make the dig succeed: most of these
+// blocks have no collision shape, the runtime's own dig gate ray-casts
+// against that same empty shape, and standBeside below can find no angle
+// that "sees" the block — so bot.dig is refused and digAt correctly
+// reports failure (see the '.' cell exception in the format section
+// above), rather than either lying or hanging.
 async function digAt(pos) {
   const b = bot.blockAt(pos)
   if (!b || b.name === 'air') return true

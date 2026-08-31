@@ -1099,6 +1099,19 @@ describe('recipe corpus', () => {
     // endless "fix it" loop with no way out. Extract planAt/digAt/buildPlan
     // from the article and run them against a synthetic world, the same way
     // verifyPlan is exercised elsewhere in this file.
+    //
+    // What this test does NOT prove: standBeside is stubbed below as
+    // unconditionally true, so this exercises the branch logic — "is this
+    // treated as occupied, and does the code attempt to clear it" — with
+    // sight and reachability assumed away. Whether a real, zero-collision-
+    // shape occupant like an actual torch can be SEEN and dug by the live
+    // runtime is a different question this synthetic harness cannot answer:
+    // the runtime's own dig gate ray-casts against the same empty collision
+    // shape standBeside's seesBlockCentre would ray-cast against, and for a
+    // torch/button/tall-grass/etc. that ray-cast finds nothing to hit from
+    // any angle, so bot.dig is refused in the live world regardless of what
+    // this test shows. See the '.' cell exception documented where the
+    // format defines '.', and the comment on digAt itself.
     const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
     const buildFence = fences.find((f) => f.includes('async function buildPlan'))!
     const bodyOf = (name: string): string => {
