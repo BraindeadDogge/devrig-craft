@@ -42,7 +42,7 @@ character it cannot resolve or about a ragged grid, before anything is built.
 const LEGEND = { L: 'oak_log', P: 'oak_planks', o: 'glass_pane', C: 'cobblestone', D: 'oak_door' }
 const PLAN = [
   { y: 0, rows: ['LCCCCCL', 'CPPPPPC', 'CPPPPPC', 'LCCCCCL'] },
-  { y: 1, rows: ['LPPDPPL', 'P.....P', 'P.....P', 'LPPPPPL'] },
+  { y: 1, rows: ['LPPDPPL', 'o.....o', 'P.....P', 'LPPPPPL'] },
 ]
 
 // Show the intent BEFORE placing anything. A plan you have looked at is a plan

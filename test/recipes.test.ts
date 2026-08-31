@@ -590,4 +590,41 @@ describe('recipe corpus', () => {
     expect(all, 'the engine must be able to show its intent').toContain('function renderPlan')
     expect(all, 'and it prints rather than returning a blob').toMatch(/renderPlan[\s\S]{0,900}print\(/)
   })
+
+  it('the worked example legend and plan agree, in both directions', async () => {
+    // The example is what a reader copies. A legend entry no row uses ships a
+    // building missing that feature (a house with no windows) plus a dead
+    // legend line; a row character with no legend entry is a cell that cannot
+    // be built at all. renderPlan warns about the second at runtime and says
+    // nothing about the first, so the example itself has to be right.
+    const fence = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))[0]!
+    const legendSrc = /^const LEGEND = \{.*\}$/m.exec(fence)
+    const planSrc = /^const PLAN = \[[\s\S]*?^\]$/m.exec(fence)
+    expect(legendSrc, 'the example must declare a LEGEND literal').not.toBeNull()
+    expect(planSrc, 'the example must declare a PLAN literal').not.toBeNull()
+    const { LEGEND, PLAN } = new Function(
+      `${legendSrc![0]}\n${planSrc![0]}\nreturn { LEGEND, PLAN }`,
+    )() as { LEGEND: Record<string, string>; PLAN: Array<{ y: number; rows: string[] }> }
+
+    const used = new Set(
+      PLAN.flatMap((l) => l.rows.join('').split('')).filter((c) => c !== '.' && c !== ' '),
+    )
+    const declared = new Set(Object.keys(LEGEND))
+    const unused = [...declared].filter((c) => !used.has(c))
+    const undeclared = [...used].filter((c) => !declared.has(c))
+    expect(unused, `LEGEND declares ${unused.join(', ')} but no row uses it`).toEqual([])
+    expect(undeclared, `rows use ${undeclared.join(', ')} with no LEGEND entry`).toEqual([])
+  })
+
+  it('the worked example is a rectangular grid, as the article demands of any plan', async () => {
+    // "Every row the same length, every layer the same number of rows" is the
+    // article's own rule; an example that breaks it teaches the exception.
+    const fence = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))[0]!
+    const planSrc = /^const PLAN = \[[\s\S]*?^\]$/m.exec(fence)!
+    const PLAN = new Function(`${planSrc[0]}\nreturn PLAN`)() as Array<{ rows: string[] }>
+    const widths = new Set(PLAN.flatMap((l) => l.rows.map((r) => r.length)))
+    const depths = new Set(PLAN.map((l) => l.rows.length))
+    expect([...widths], 'ragged row lengths in the example').toHaveLength(1)
+    expect([...depths], 'layers of differing depth in the example').toHaveLength(1)
+  })
 })
