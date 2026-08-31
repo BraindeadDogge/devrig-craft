@@ -205,8 +205,9 @@ async function flyClear(goal) {
   // Straight there first. Most hops on a build site are a couple of blocks with
   // nothing in between, and going up to cruise height and back down for every
   // one of them costs about twenty blocks of vertical travel per block placed —
-  // measured, that is what ran a house's roof phase out of its budget. Give the
-  // direct line a short leash; if it does not make it, THEN take the long way.
+  // measured, that is what ran Step 2b out of its budget with the roof half
+  // laid. Give the direct line a short leash; if it does not make it, THEN take
+  // the long way over the top.
   if (await flyLeg(goal, 2500)) return true
   const cruiseY = Math.max(bot.entity.position.y, goal.y, y0 + 8) + 2
   const here = bot.entity.position
@@ -227,7 +228,7 @@ async function raiseTo(dx, dy, dz) {
   if (atHeight() && (await walkTo(dx, dy, dz))) return true
   if (canFly) {
     // Hover exactly where the work is. No tower, no cleanup, no holes punched
-    // in your own build trying to path to a ledge that has no walking route.
+    // in your own house trying to path to a ledge that has no walking route.
     const goal = new Vec3(BASE.x + dx + 0.5, goalY, BASE.z + dz + 0.5)
     if (await flyClear(goal)) return true
     // Flight is an optimisation, not a dependency. mineflayer's flyTo moves the
@@ -242,7 +243,7 @@ async function raiseTo(dx, dy, dz) {
   // under it yet, so it spends its entire timeout proving that and fails —
   // measured live as fifteen "walk to …: timeout" entries in one 170s run.
   if (!atHeight()) await walkTo(dx, Math.floor(bot.entity.position.y) - y0, dz) // below the goal
-  await hold('oak_planks') // scaffolding, regardless of what the plan itself uses
+  await hold('oak_planks')
   for (let i = 0; i < 6 && !atHeight(); i++) {
     const feet = bot.entity.position.floored()
     const ref = bot.blockAt(feet.offset(0, -1, 0))
@@ -285,7 +286,7 @@ async function climbOutOfPit() {
   const out = await raiseTo(dx, 0, dz)
   if (!out) {
     bump('still below the build')
-    print('could not climb out — dig steps toward BASE or re-run for another site')
+    print('could not climb out — dig steps toward BASE or re-run Step 1 for another lot')
   }
   return out
 }
@@ -369,7 +370,7 @@ async function walkTo(dx, dy, dz) {
             const b = bot.blockAt(bot.entity.position.floored().offset(step.x, dyFace, step.z))
             if (!b || b.boundingBox !== 'block') continue
             // Never tunnel out through your own build — walk around instead.
-            if (partOfTheBuild(BASE, PLAN, LEGEND, b.position)) { bump('pinned by my own build — not digging it'); continue }
+            if (partOfTheBuild(b.position)) { bump('pinned by my own build — not digging it'); continue }
             await Promise.race([bot.dig(b).catch(note), sleep(3000)])
           }
           lastMove = Date.now()
@@ -606,24 +607,28 @@ const planAt = (plan, legend, dx, dy, dz) => {
   const ch = layer?.rows[dz]?.[dx]
   if (ch === undefined || ch === ' ') return undefined // not mine
   if (ch === '.') return 'air'
-  return legend[ch]
+  const mat = legend[ch]
+  return mat === undefined ? null : mat // null: legend has no entry for this character
 }
 // Anything the plan speaks for is the build's own — the stuck-walk watchdog
 // must never tunnel out through it. This is what `partOfTheHouse` did with
 // hardcoded predicates; now it reads the plan, so it is right for any shape.
-const partOfTheBuild = (BASE, plan, legend, p) => {
-  const want = planAt(plan, legend, p.x - BASE.x, p.y - BASE.y, p.z - BASE.z)
+// An unknown legend character (null) still counts as "mine" — the watchdog
+// must not dig a cell just because its material is unresolved.
+const partOfTheBuild = (p) => {
+  const want = planAt(PLAN, LEGEND, p.x - BASE.x, p.y - BASE.y, p.z - BASE.z)
   return want !== undefined && want !== 'air'
 }
 
 // Build bottom-up: every block then has a neighbour beneath it to click.
-async function buildPlan(BASE, plan, legend) {
-  const layers = [...plan].sort((a, b) => a.y - b.y)
+async function buildPlan() {
+  const layers = [...PLAN].sort((a, b) => a.y - b.y)
   for (const layer of layers) {
     for (const [dz, row] of layer.rows.entries()) {
       for (let dx = 0; dx < row.length; dx++) {
-        const want = planAt(plan, legend, dx, layer.y, dz)
-        if (want === undefined) continue
+        const want = planAt(PLAN, LEGEND, dx, layer.y, dz)
+        if (want === undefined) continue // not mine
+        if (want === null) { bump('no legend entry'); continue }
         const at = BASE.offset(dx, layer.y, dz)
         const there = bot.blockAt(at)
         if (want === 'air') {
@@ -632,6 +637,11 @@ async function buildPlan(BASE, plan, legend) {
           continue
         }
         if (there?.name === want) { bump('already right'); continue }
+        if (there && there.boundingBox === 'block') {
+          // The cell holds the wrong solid block — clear it before placing,
+          // generalising house.md's replaceGround (house.md:647) to the plan.
+          if (!(await digAt(at))) { bump('could not clear a wrong block before replacing it'); continue }
+        }
         await put(dx, layer.y, dz, want)
       }
     }
@@ -642,6 +652,6 @@ async function buildPlan(BASE, plan, legend) {
 
 print(`starting: ${JSON.stringify(whereAmI())}`)
 await climbOutOfPit()
-const result = await buildPlan(BASE, PLAN, LEGEND)
+const result = await buildPlan()
 printJson({ ...result, where: whereAmI() })
 ```

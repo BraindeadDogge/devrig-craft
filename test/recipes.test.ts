@@ -652,4 +652,119 @@ describe('recipe corpus', () => {
       /partOfTheBuild|partOfThePlan/,
     )
   })
+
+  it('the engine keeps the house helpers byte-identical, minus the two lines it must change', async () => {
+    // A third copy of the prelude. house.md's two fences are already pinned to
+    // each other (see 'the helpers shared by both build fences are byte-identical'
+    // above); this pins blueprint.md's engine fence to the same source. Only two
+    // lines may legitimately differ: put's y-offset (the engine builds layer 0
+    // directly on BASE, house.md builds on top of a foundation) and walkTo's
+    // watchdog guard (partOfTheBuild takes no BASE/PLAN/LEGEND arguments, reading
+    // the globals directly, so the pinning below never has to thread them).
+    const house = jsFences(await readFile(`${RECIPES}/skill/house.md`, 'utf8'))[1]!
+    const blueprint = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))[1]!
+    const extract = (fence: string, name: string): string => {
+      const re = new RegExp(`(async function ${name}\\(|function ${name}\\(|const ${name} = )`)
+      const m = re.exec(fence)
+      expect(m, `both house.md and blueprint.md must define ${name}`).not.toBeNull()
+      const rest = fence.slice(m!.index)
+      const end = rest.indexOf('\n}')
+      expect(end, `${name} must be a complete declaration`).toBeGreaterThan(-1)
+      return rest.slice(0, end + 2)
+    }
+    const shared = [
+      'land',
+      'flyLeg',
+      'flyClear',
+      'raiseTo',
+      'stepAside',
+      'standWhereVisible',
+      'standBeside',
+      'digAt',
+      'seesFace',
+      'seesBlockCentre',
+      'chooseFaces',
+      'chooseFace',
+      'whereAmI',
+      'climbOutOfPit',
+      'approach',
+      'noFaceReason',
+    ]
+    for (const name of shared) {
+      const a = extract(house, name)
+      const b = extract(blueprint, name)
+      expect(b, `${name} has drifted between house.md and blueprint.md`).toBe(a)
+    }
+
+    // The two named exceptions: normalise the one line that legitimately
+    // differs in each, then require the rest of the body to match exactly.
+    const normalize = (src: string, pattern: RegExp, replacement: string): string =>
+      src
+        .split('\n')
+        .map((l) => (pattern.test(l) ? replacement : l))
+        .join('\n')
+
+    const putHouse = normalize(
+      extract(house, 'put'),
+      /const target = BASE\.offset\(/,
+      '  const target = BASE.offset(NORMALIZED)',
+    )
+    const putBlueprint = normalize(
+      extract(blueprint, 'put'),
+      /const target = BASE\.offset\(/,
+      '  const target = BASE.offset(NORMALIZED)',
+    )
+    expect(putBlueprint, 'put has drifted beyond its known y-offset line').toBe(putHouse)
+
+    const walkToHouse = normalize(
+      extract(house, 'walkTo'),
+      /partOfThe\w+\(.*\)\) \{ bump\(.*\); continue \}/,
+      '            NORMALIZED',
+    )
+    const walkToBlueprint = normalize(
+      extract(blueprint, 'walkTo'),
+      /partOfThe\w+\(.*\)\) \{ bump\(.*\); continue \}/,
+      '            NORMALIZED',
+    )
+    expect(walkToBlueprint, 'walkTo has drifted beyond its known watchdog-guard line').toBe(
+      walkToHouse,
+    )
+  })
+
+  it('planAt resolves a legend character to material, air, or "not mine" — and tells unknown apart from blank', async () => {
+    // The text assertions above are not wrong, just insufficient: they never
+    // execute planAt. It is a pure function with no bot dependency, so it can
+    // run for real, exactly like the LEGEND/PLAN literal test above.
+    const fence = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))[1]!
+    const start = fence.indexOf('const planAt = ')
+    expect(start, 'the engine must define planAt').toBeGreaterThan(-1)
+    const rest = fence.slice(start)
+    const end = rest.indexOf('\n}')
+    const planAtSrc = rest.slice(0, end + 2)
+
+    const planAt = new Function(`${planAtSrc}\nreturn planAt`)() as (
+      plan: Array<{ y: number; rows: string[] }>,
+      legend: Record<string, string>,
+      dx: number,
+      dy: number,
+      dz: number,
+    ) => string | null | undefined
+
+    const legend = { L: 'oak_log', D: 'oak_door' }
+    const plan = [{ y: 0, rows: ['L.D', 'L X'] }]
+
+    expect(planAt(plan, legend, 0, 0, 0), 'a legend character resolves to its material').toBe(
+      'oak_log',
+    )
+    expect(planAt(plan, legend, 1, 0, 0), "'.' means the cell must be empty").toBe('air')
+    expect(planAt(plan, legend, 1, 0, 1), 'a space is not mine').toBeUndefined()
+    expect(
+      planAt(plan, legend, 2, 0, 1),
+      'a character with no legend entry must not read the same as a space',
+    ).toBeNull()
+    expect(
+      planAt(plan, legend, 2, 0, 1),
+      'unknown-legend and not-mine must be distinguishable',
+    ).not.toBe(planAt(plan, legend, 1, 0, 1))
+  })
 })
