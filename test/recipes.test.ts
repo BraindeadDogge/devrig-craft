@@ -1089,4 +1089,122 @@ describe('recipe corpus', () => {
     }
   })
 
+  it('buildPlan clears a `.` cell of any occupant, not just a full block', async () => {
+    // The format says a '.' cell "must be empty — the engine digs anything
+    // standing there", but the air-branch only used to clear cells whose
+    // occupant had boundingBox 'block'. A torch, carpet, button, pressure
+    // plate or tall grass sitting in a '.' cell was reported "already clear"
+    // and never touched — while verifyPlan (which judges by name, not by
+    // boundingBox) correctly kept reporting the same cell wrong. That was an
+    // endless "fix it" loop with no way out. Extract planAt/digAt/buildPlan
+    // from the article and run them against a synthetic world, the same way
+    // verifyPlan is exercised elsewhere in this file.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
+    const buildFence = fences.find((f) => f.includes('async function buildPlan'))!
+    const bodyOf = (name: string): string => {
+      const at = buildFence.indexOf(name)
+      expect(at, `${name} not found in the build fence`).toBeGreaterThan(-1)
+      const rest = buildFence.slice(at)
+      return rest.slice(0, rest.indexOf('\n}') + 2)
+    }
+    const planAtSrc = bodyOf('const planAt = ')
+    const digAtSrc = bodyOf('async function digAt')
+    const buildPlanSrc = bodyOf('async function buildPlan')
+
+    // x=0: a wrong SOLID block sits where the plan wants empty (must still
+    // be cleared — this is the case that already worked).
+    // x=1: a non-solid occupant (a torch) sits where the plan wants empty —
+    // the regression case for the bug.
+    // x=2: genuinely empty already (absent from the world) — must not be
+    // "dug" at all.
+    const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
+      '0,0,0': { name: 'stone', boundingBox: 'block' },
+      '1,0,0': { name: 'torch', boundingBox: 'empty' },
+    }
+    const dug: string[] = []
+    const bot = {
+      blockAt: (p: { x: number; y: number; z: number }) => worldBlocks[`${p.x},${p.y},${p.z}`] ?? null,
+      dig: async (b: { name: string }) => {
+        dug.push(b.name)
+        const key = Object.keys(worldBlocks).find((k) => worldBlocks[k]!.name === b.name)
+        if (key) delete worldBlocks[key]
+      },
+    }
+    const tally: Record<string, number> = {}
+    const bump = (r: string) => {
+      tally[r] = (tally[r] ?? 0) + 1
+      return r
+    }
+    const note = () => {}
+    const standBeside = async () => true // always able to stand beside, for this test
+    const sleep = async () => {}
+    const printed: string[] = []
+    const print = (...a: unknown[]) => printed.push(a.map(String).join(' '))
+    const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
+    const LEGEND = {} // '.' never consults the legend
+    const PLAN = [{ y: 0, rows: ['...'] }]
+    const pillars: unknown[] = []
+    const partOfTheBuild = () => false
+    const placed = 0
+
+    const errors: Record<string, number> = {}
+    const stalls = 0
+    const run = new Function(
+      'bot',
+      'standBeside',
+      'bump',
+      'note',
+      'sleep',
+      'print',
+      'BASE',
+      'PLAN',
+      'LEGEND',
+      'pillars',
+      'partOfTheBuild',
+      'placed',
+      'tally',
+      'errors',
+      'stalls',
+      `${planAtSrc}\n${digAtSrc}\n${buildPlanSrc}\nreturn buildPlan()`,
+    ) as (
+      bot: unknown,
+      standBeside: unknown,
+      bump: unknown,
+      note: unknown,
+      sleep: unknown,
+      print: unknown,
+      BASE: unknown,
+      PLAN: unknown,
+      LEGEND: unknown,
+      pillars: unknown,
+      partOfTheBuild: unknown,
+      placed: unknown,
+      tally: unknown,
+      errors: unknown,
+      stalls: unknown,
+    ) => Promise<{ placed: number; tally: Record<string, number> }>
+
+    await run(
+      bot,
+      standBeside,
+      bump,
+      note,
+      sleep,
+      print,
+      BASE,
+      PLAN,
+      LEGEND,
+      pillars,
+      partOfTheBuild,
+      placed,
+      tally,
+      errors,
+      stalls,
+    )
+
+    expect(dug, 'the wrong solid block must still be cleared').toContain('stone')
+    expect(dug, 'a non-solid occupant of a "." cell must be cleared too').toContain('torch')
+    expect(worldBlocks['2,0,0'], 'genuine air must never be "dug"').toBeUndefined()
+    expect(tally['already clear'] ?? 0, 'the genuinely empty cell counts as already clear').toBe(1)
+  })
 })

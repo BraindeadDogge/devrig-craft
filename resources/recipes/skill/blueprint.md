@@ -655,12 +655,19 @@ async function standBeside(pos) {
   }
   return false
 }
+// Judge occupancy by NAME, not by boundingBox: a torch, carpet, button,
+// pressure plate or tall grass has boundingBox 'empty', same as true air, but
+// is a real block that bot.dig can still break. Testing boundingBox here is
+// what let a '.' cell hold one of these forever — verifyPlan (which already
+// judges by name) kept reporting it wrong, and this function kept saying
+// "nothing to dig".
 async function digAt(pos) {
   const b = bot.blockAt(pos)
-  if (!b || b.boundingBox !== 'block') return true
+  if (!b || b.name === 'air') return true
   if (!(await standBeside(pos))) { bump('nowhere to stand beside the cell I must dig'); return false }
   await Promise.race([bot.dig(bot.blockAt(pos)).catch(note), sleep(4000)])
-  return bot.blockAt(pos)?.boundingBox !== 'block'
+  const after = bot.blockAt(pos)
+  return !after || after.name === 'air'
 }
 
 // --- the engine itself: read the plan, ask it what belongs at each cell ---
@@ -696,7 +703,12 @@ async function buildPlan() {
         const at = BASE.offset(dx, layer.y, dz)
         const there = bot.blockAt(at)
         if (want === 'air') {
-          if (!there || there.boundingBox !== 'block') { bump('already clear'); continue }
+          // A '.' cell must be genuinely empty — not merely free of a FULL
+          // block. Judge by name, like verifyPlan does: boundingBox alone
+          // cannot tell "nothing here" from "a torch/carpet/button/pressure
+          // plate here", since both read 'empty'. Testing boundingBox first
+          // used to leave exactly that kind of occupant standing forever.
+          if (!there || there.name === 'air') { bump('already clear'); continue }
           if (!(await digAt(at))) bump('could not clear a cell the plan wants empty')
           continue
         }
