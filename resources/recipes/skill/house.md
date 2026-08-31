@@ -275,9 +275,9 @@ than filling a cell of its own.
 - **Chest and crafting table** go in the work corner — plan cells `x+5` at
   `z+4` and `z+5`, on the floor. Those are ordinary placements: stand in the
   room, click the floor's top face.
-- **Wall torches, on the top wall course, on the inside faces.** Click the wall block
-  at plan y+3 with the face pointing INTO the room, and the torch hangs on the
-  wall the way a person's would: over the bed, over the work corner, and one
+- **Wall torches, on the top wall course, on the inside faces.** Click the
+  wall block at plan y+3 with the face pointing INTO the room, and the torch
+  hangs on the wall the way a person's would: over the bed, over the work corner, and one
   beside the door. Torches dropped on the floor are the single clearest tell
   that a bot built the room.
 - **Two porch torches** on the outside of the front wall, either side of the
