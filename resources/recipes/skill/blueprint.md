@@ -731,9 +731,19 @@ async function buildPlan() {
           continue
         }
         if (there?.name === want) { bump('already right'); continue }
-        if (there && there.boundingBox === 'block') {
-          // The cell holds the wrong solid block — clear it before placing,
-          // generalising house.md's replaceGround (house.md:647) to the plan.
+        if (there && there.name !== 'air') {
+          // The cell holds something other than what the plan wants —
+          // solid or not — so clear it before placing, generalising
+          // house.md's replaceGround (house.md:647) to the plan. Judging by
+          // name here, the same test the '.' branch above and verifyPlan
+          // both use, matters for exactly the same reason: a wrong SOLID
+          // block is not the only way a material cell can be occupied by
+          // the wrong thing — a torch or carpet sitting where the plan
+          // wants a block would read boundingBox 'empty' and be silently
+          // skipped straight to put(), which then reports 'occupied' only
+          // if the leftover happens to BE solid. Judging by name at least
+          // makes this an attempted, reported dig instead of a silent
+          // mismatch that build and verify would disagree about.
           if (!(await digAt(at))) { bump('could not clear a wrong block before replacing it'); continue }
         }
         await put(dx, layer.y, dz, want)

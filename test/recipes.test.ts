@@ -1130,9 +1130,14 @@ describe('recipe corpus', () => {
     // the regression case for the bug.
     // x=2: genuinely empty already (absent from the world) — must not be
     // "dug" at all.
+    // x=3: a MATERIAL cell (wants cobblestone) holds a different, non-solid
+    // occupant (a wall_torch) — the symmetric hole in the material branch,
+    // which used to gate on boundingBox === 'block' and so never attempted
+    // to clear a non-solid wrong-occupant before placing.
     const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
       '0,0,0': { name: 'stone', boundingBox: 'block' },
       '1,0,0': { name: 'torch', boundingBox: 'empty' },
+      '3,0,0': { name: 'wall_torch', boundingBox: 'empty' },
     }
     const dug: string[] = []
     const bot = {
@@ -1154,14 +1159,18 @@ describe('recipe corpus', () => {
     const printed: string[] = []
     const print = (...a: unknown[]) => printed.push(a.map(String).join(' '))
     const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
-    const LEGEND = {} // '.' never consults the legend
-    const PLAN = [{ y: 0, rows: ['...'] }]
+    const LEGEND = { M: 'cobblestone' } // '.' never consults the legend; M is the material cell
+    const PLAN = [{ y: 0, rows: ['...M'] }]
     const pillars: unknown[] = []
     const partOfTheBuild = () => false
     const placed = 0
 
     const errors: Record<string, number> = {}
     const stalls = 0
+    const putCalls: Array<{ dx: number; dy: number; dz: number; mat: string }> = []
+    const put = async (dx: number, dy: number, dz: number, mat: string) => {
+      putCalls.push({ dx, dy, dz, mat })
+    }
     const run = new Function(
       'bot',
       'standBeside',
@@ -1178,6 +1187,7 @@ describe('recipe corpus', () => {
       'tally',
       'errors',
       'stalls',
+      'put',
       `${planAtSrc}\n${digAtSrc}\n${buildPlanSrc}\nreturn buildPlan()`,
     ) as (
       bot: unknown,
@@ -1195,6 +1205,7 @@ describe('recipe corpus', () => {
       tally: unknown,
       errors: unknown,
       stalls: unknown,
+      put: unknown,
     ) => Promise<{ placed: number; tally: Record<string, number> }>
 
     await run(
@@ -1213,11 +1224,20 @@ describe('recipe corpus', () => {
       tally,
       errors,
       stalls,
+      put,
     )
 
     expect(dug, 'the wrong solid block must still be cleared').toContain('stone')
     expect(dug, 'a non-solid occupant of a "." cell must be cleared too').toContain('torch')
     expect(worldBlocks['2,0,0'], 'genuine air must never be "dug"').toBeUndefined()
     expect(tally['already clear'] ?? 0, 'the genuinely empty cell counts as already clear').toBe(1)
+    expect(
+      dug,
+      'a non-solid WRONG occupant of a material cell must be cleared too, not silently skipped to put()',
+    ).toContain('wall_torch')
+    expect(
+      putCalls,
+      'the material cell must still get its real material placed after the wrong occupant is cleared',
+    ).toContainEqual({ dx: 3, dy: 0, dz: 0, mat: 'cobblestone' })
   })
 })
