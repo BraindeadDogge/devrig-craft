@@ -394,6 +394,14 @@ describe('recipe corpus', () => {
     const fence = await engineFence()
     expect(fence, 'the engine must report its own position vs BASE').toContain('whereAmI')
     expect(fence, 'the engine must get itself out of a hole').toContain('climbOutOfPit')
+    // Layer 0 of a plan sits ON BASE, so y0 is the floor course itself and the
+    // level a bot STANDS on is y0 + 1 — what ensureMobile's /tp spot uses.
+    // Climbing out to dy 0 aims the pathfinder at a cell inside the floor.
+    const pit = fence.slice(fence.indexOf('async function climbOutOfPit'))
+    expect(
+      pit.slice(0, pit.indexOf('\n}')),
+      'climbing out must arrive at the standable level, not inside the floor course',
+    ).toContain('raiseTo(dx, 1, dz)')
   })
 
   it('humanlike teaches locating yourself against the build and getting out of a hole', async () => {

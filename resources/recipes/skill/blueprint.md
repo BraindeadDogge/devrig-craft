@@ -360,7 +360,11 @@ async function climbOutOfPit() {
   print(`in a hole: ${JSON.stringify(w)}`)
   const dx = Math.min(Math.max(w.rel.dx, -2), W + 1)
   const dz = Math.min(Math.max(w.rel.dz, -2), D + 1)
-  const out = await raiseTo(dx, 0, dz)
+  // dy 1, not 0: layer 0 IS the floor course, so y0 + 0 is the block the
+  // build stands in and y0 + 1 is the level a bot stands ON — the same
+  // arithmetic ensureMobile's /tp spot uses. Asking to arrive at y0 puts the
+  // target inside the floor, where pathfinder has nothing to stand on.
+  const out = await raiseTo(dx, 1, dz)
   if (!out) {
     bump('still below the build')
     print('could not climb out — dig steps toward BASE or re-run Step 1 for another lot')
