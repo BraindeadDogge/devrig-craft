@@ -52,9 +52,15 @@ export async function buildSnapshot(
     // Deterministic slug allocation: order by (host, port), never by UDP arrival.
     .sort((x, y) => x.host.localeCompare(y.host) || x.port - y.port)
 
+  // An announcement from one of THIS machine's addresses is this machine: reach
+  // it over loopback. A VPN/tunnel interface (Tailscale, utun*) often wins the
+  // multicast egress, so the datagram arrives from the tunnel address — and
+  // connecting back to that address hangs, leaving version null and the world
+  // marked incompatible even though it is running one metre away.
+  const hostOf = (announced: string) => (localHosts.has(announced) ? '127.0.0.1' : announced)
   const ports = [...new Set(extraPorts)].filter((p) => !localAnnouncedPorts.has(p))
   const [lanPings, serverPings] = await Promise.all([
-    Promise.all(announcements.map((a) => ping(a.host, a.port))),
+    Promise.all(announcements.map((a) => ping(hostOf(a.host), a.port))),
     Promise.all(ports.map((p) => ping('127.0.0.1', p))),
   ])
 
@@ -68,7 +74,7 @@ export async function buildSnapshot(
     worlds.push({
       worldName,
       displayName: a.motd,
-      host: a.host,
+      host: hostOf(a.host),
       port: a.port,
       source: 'lan',
       version: pinged?.version ?? null,

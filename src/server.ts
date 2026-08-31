@@ -9,6 +9,9 @@ import { BotManager, type BotFactory, type BotLike } from './runtime/botManager.
 import { executeScript, ScriptError } from './runtime/sandbox.js'
 import { toWire } from './wire.js'
 import { SERVER_NAME, SERVER_VERSION } from './version.js'
+import { collectGrid } from './render/collect.js'
+import { renderView, type View } from './render/blockView.js'
+import { encodePng } from './render/png.js'
 
 export type CraftServerDeps = {
   /** Fresh discovery snapshot per call — compose buildSnapshot + real sources in the CLI. */
@@ -115,7 +118,17 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
             'what you are doing and why, in one human-readable sentence — it is SPOKEN INTO THE ' +
               'GAME CHAT as narration for the human watching, then logged',
           ),
-        timeout: z.number().int().min(1).max(600).optional().describe('seconds, default 120'),
+        // A whole house is one call by design, and the phases measured at
+        // 220s and counting — 600s was too tight to finish one. Still an
+        // explicit ceiling, not an open door: an agent will eventually ask
+        // for 999999.
+        timeout: z
+          .number()
+          .int()
+          .min(1)
+          .max(3600)
+          .optional()
+          .describe('seconds, default 120, max 3600'),
       },
     },
     async ({ world_name, code, task_id, reason, timeout }) => {
@@ -157,13 +170,29 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
             console.error('bot end after timeout failed:', endErr)
           }
           return err(
-            `execution_id: ${executionId}\n${e.message}\nBot disconnected to stop the runaway script — craft_join_world to rejoin.`,
+            [
+              `execution_id: ${executionId}`,
+              e.message,
+              // The output is the point of the run: a build prints how far it
+              // got, and a timeout that swallows that teaches nothing.
+              e.output ? `--- printed before the timeout ---\n${e.output}` : undefined,
+              'Bot disconnected to stop the runaway script — craft_join_world to rejoin.',
+            ]
+              .filter(Boolean)
+              .join('\n'),
           )
         }
         if (e instanceof ScriptError) {
           say(entry.bot, `[devrig] hit a snag: ${e.message}`)
           return err(
-            `execution_id: ${executionId}\n${[e.message, e.failingLine, e.scriptStack].filter(Boolean).join('\n')}`,
+            `execution_id: ${executionId}\n${[
+              e.message,
+              e.failingLine,
+              e.scriptStack,
+              e.output ? `--- printed before the error ---\n${e.output}` : undefined,
+            ]
+              .filter(Boolean)
+              .join('\n')}`,
           )
         }
         throw e
@@ -216,23 +245,70 @@ export function createCraftServer(deps: CraftServerDeps): { server: McpServer; e
     },
   )
 
+  const VIEWS = ['north', 'south', 'east', 'west', 'top', 'iso'] as const
+
   server.registerTool(
     'craft_take_screenshot',
     {
       description:
-        'HEAVY ENDPOINT: render the bot POV. Not available on this install (headless GL) — for ' +
-        'verification use craft_execute_code with bot.blockAt sweeps ' +
-        '(mcp-craft://skill/world-queries); the human watches the world first-person anyway.',
+        'Render the build from block data as PNG — four elevations, straight down, and isometric. ' +
+        'Use it to judge how the build LOOKS once it stands; for whether a block actually landed, ' +
+        'a bot.blockAt sweep is still the answer (mcp-craft://skill/world-queries).',
       inputSchema: {
         world_name: z.string().max(256),
         task_id: z.string().max(256),
         reason: z.string().max(4096),
+        center: z
+          .object({ x: z.number(), y: z.number(), z: z.number() })
+          .optional()
+          .describe('what to look at; defaults to the bot'),
+        radius: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe('half-extent of the box, default 12; 20 reads 41^3 blocks synchronously'),
+        views: z.array(z.enum(VIEWS)).min(1).max(6).optional().describe('default: all four elevations'),
+        size: z.number().int().min(1).max(12).optional().describe('pixels per block, default 6'),
       },
     },
-    async () =>
-      err(
-        'screenshot rendering is not available on this install — verify via bot.blockAt sweeps (mcp-craft://skill/world-queries); the human is watching first-person anyway',
-      ),
+    async ({ world_name, task_id, reason, center, radius, views, size }) => {
+      const entry = bots.get(world_name)
+      if (!entry || entry.state !== 'ready')
+        return err(
+          `No ready bot in "${world_name}" (state: ${entry?.state ?? 'none'}). Call craft_join_world, then poll craft_list_bots until state=ready.`,
+        )
+      const blockAt = entry.bot.blockAt
+      if (typeof blockAt !== 'function')
+        return err('this bot cannot read the world (no blockAt) — rejoin with craft_join_world')
+
+      const centre = center ?? entry.bot.entity?.position
+      if (!centre) return err('the bot has no position yet — poll craft_list_bots until state=ready')
+
+      const r = radius ?? 12
+      const scale = size ?? 6
+      const wanted: View[] = views ?? ['north', 'east', 'south', 'west']
+      say(entry.bot, `[devrig] ${reason}`)
+      console.error(`craft_take_screenshot task=${task_id} world=${world_name} r=${r} views=${wanted.join(',')}`)
+
+      const grid = collectGrid({ blockAt }, centre, r)
+      const images = wanted.map((view) => {
+        const raster = renderView(grid, view, scale)
+        return {
+          type: 'image' as const,
+          data: encodePng(raster.width, raster.height, raster.rgb).toString('base64'),
+          mimeType: 'image/png' as const,
+        }
+      })
+      const at = `${Math.floor(centre.x)}, ${Math.floor(centre.y)}, ${Math.floor(centre.z)}`
+      return {
+        content: [
+          { type: 'text' as const, text: `${wanted.join(', ')} — a ${r * 2 + 1} block cube centred on (${at}), ${scale}px per block` },
+          ...images,
+        ],
+      }
+    },
   )
 
   server.registerTool(

@@ -61,3 +61,43 @@ describe('executeScript', () => {
     expect(err!.timedOut).toBe(true)
   })
 })
+
+describe('output survives a failing script', () => {
+  it('a timed-out script still returns everything it printed', async () => {
+    // Measured three times in one session: a fence that hit its timeout came
+    // back with no output at all, so the run taught nothing and had to be
+    // re-derived from the world state. The lines are the whole point of the
+    // run — they must outlive the failure.
+    const err = await executeScript(
+      `print('phase one done')
+       printJson({ placed: 42 })
+       await sleep(5000)
+       print('never reached')`,
+      {},
+      300,
+    ).then(
+      () => null,
+      (e: unknown) => e as ScriptError,
+    )
+    expect(err, 'the script should have timed out').not.toBeNull()
+    expect(err!.timedOut).toBe(true)
+    expect(err!.output, 'the timeout must carry the output').toContain('phase one done')
+    expect(err!.output).toContain('"placed": 42')
+    expect(err!.output).not.toContain('never reached')
+  })
+
+  it('a script that throws still returns everything it printed', async () => {
+    const err = await executeScript(
+      `print('got this far')
+       throw new Error('boom')`,
+      {},
+      5000,
+    ).then(
+      () => null,
+      (e: unknown) => e as ScriptError,
+    )
+    expect(err).not.toBeNull()
+    expect(err!.timedOut).toBe(false)
+    expect(err!.output, 'a thrown script must carry its output too').toContain('got this far')
+  })
+})

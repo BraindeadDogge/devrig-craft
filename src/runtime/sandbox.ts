@@ -6,6 +6,13 @@ export class ScriptError extends Error {
     public readonly scriptStack?: string,
     public readonly failingLine?: string,
     public readonly timedOut: boolean = false,
+    /**
+     * Everything the script printed before it died. A long build prints its
+     * progress as it goes, and losing that on a timeout is losing the only
+     * record of how far it got — measured three times in one session, each
+     * costing a full re-derivation from the world state.
+     */
+    public readonly output?: string,
   ) {
     super(message)
     this.name = 'ScriptError'
@@ -79,10 +86,24 @@ export async function executeScript(
     )
   }
 
+  // Whatever has been printed so far, rendered the same way a successful run
+  // renders it. Both failure paths below carry it out with them.
+  const printedSoFar = (): string | undefined =>
+    lines.length > 0 || skipped > 0 ? renderOutput(lines, skipped) : undefined
+
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new ScriptError(`Script timed out after ${timeoutMs} ms`, undefined, undefined, true)),
+      () =>
+        reject(
+          new ScriptError(
+            `Script timed out after ${timeoutMs} ms`,
+            undefined,
+            undefined,
+            true,
+            printedSoFar(),
+          ),
+        ),
       timeoutMs,
     )
   })
@@ -91,7 +112,13 @@ export async function executeScript(
   } catch (e) {
     if (e instanceof ScriptError) throw e
     const err = e as Error
-    throw new ScriptError(`Script threw: ${err.message}`, err.stack, extractFailingLine(err.stack, srcLines))
+    throw new ScriptError(
+      `Script threw: ${err.message}`,
+      err.stack,
+      extractFailingLine(err.stack, srcLines),
+      false,
+      printedSoFar(),
+    )
   } finally {
     clearTimeout(timer)
   }

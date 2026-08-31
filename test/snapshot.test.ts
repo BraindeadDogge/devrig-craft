@@ -24,6 +24,22 @@ describe('buildSnapshot', () => {
     ])
   })
 
+  it('pings an announcement from this machine over loopback, not the announced address', async () => {
+    // A VPN/Tailscale interface wins the multicast egress, so the datagram
+    // arrives FROM the tunnel address (100.x). Connecting back to that address
+    // hangs — but it is this machine, so 127.0.0.1 reaches the same world.
+    const lan = async () => [{ motd: 'devrig_v1', port: 49871, host: '100.96.12.147' }]
+    const loopbackOnly = async (host: string) =>
+      host === '127.0.0.1' ? { version: '1.21.4', motd: '', players: null } : null
+    const worlds = await buildSnapshot(lan, loopbackOnly, [], new Set(['127.0.0.1', '100.96.12.147']))
+    expect(worlds[0]).toMatchObject({
+      host: '127.0.0.1',
+      port: 49871,
+      version: '1.21.4',
+      compatible: true,
+    })
+  })
+
   it('assigns dedup suffixes independent of announcement arrival order', async () => {
     const a = { motd: 'w', port: 2000, host: 'b-host' }
     const b = { motd: 'w', port: 1000, host: 'a-host' }

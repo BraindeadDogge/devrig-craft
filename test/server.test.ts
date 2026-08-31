@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { Vec3 } from 'vec3'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
@@ -10,7 +11,7 @@ import type { BotLike } from '../src/runtime/botManager.js'
 import type { DiscoveredWorld } from '../src/discovery/types.js'
 
 class FakeBot extends EventEmitter implements BotLike {
-  entity = { position: { x: 0, y: 64, z: 0 } }
+  entity = { position: new Vec3(0, 64, 0) } // a real bot's position is a Vec3
   health = 20
   food = 20
   lastChat = ''
@@ -20,7 +21,9 @@ class FakeBot extends EventEmitter implements BotLike {
     this.lastChat = text
     this.chats.push(text)
   }
-  blockAt() {
+  blockAt(pos: Vec3) {
+    // A real bot floors the position; a bare {x, y, z} literal would throw here.
+    if (typeof pos?.floored !== 'function') throw new TypeError('pos.floored is not a function')
     return { name: 'stone' }
   }
   end() {
@@ -99,7 +102,7 @@ describe('craft MCP server', () => {
     const joinRes = await client.callTool({ name: 'craft_join_world', arguments: { world_name: 'test-world' } })
     expect(text(joinRes)).toContain('127.0.0.1:7777')
     bot.emit('spawn')
-    const res = await exec('print(bot.blockAt().name)')
+    const res = await exec('print(bot.blockAt(bot.entity.position).name)')
     const [first, ...rest] = text(res).split('\n')
     expect(first).toMatch(/^execution_id: [0-9a-f-]{36}$/)
     expect(rest.join('\n')).toBe('stone')
@@ -138,9 +141,13 @@ describe('craft MCP server', () => {
     const tooBig = await exec('x'.repeat(100_001))
     expect(tooBig.isError).toBe(true)
     expect(text(tooBig)).toContain('at most 100000')
-    const badTimeout = await exec('print(1)', 601)
+    // The ceiling moved to an hour so a whole house fits in one call, but a
+    // ceiling still has to exist — an agent will eventually ask for 999999.
+    const okTimeout = await exec('print(1)', 1800)
+    expect(okTimeout.isError, 'half an hour must be allowed now').toBeFalsy()
+    const badTimeout = await exec('print(1)', 3601)
     expect(badTimeout.isError).toBe(true)
-    expect(text(badTimeout)).toContain('less than or equal to 600')
+    expect(text(badTimeout)).toContain('less than or equal to 3600')
   })
 
   it('serializes executions: concurrent call gets an explicit busy error', async () => {
@@ -234,13 +241,53 @@ describe('craft MCP server', () => {
     expect(bot.chats.some((c) => c.startsWith('[devrig] hit a snag:'))).toBe(true)
   })
 
-  it('screenshot returns the M1 guidance error', async () => {
+  it('renders the world around the bot as PNG images', async () => {
     await joinAndSpawn()
-    const res = await client.callTool({
+    const shot = await client.callTool({
       name: 'craft_take_screenshot',
-      arguments: { world_name: 'test-world', task_id: 't', reason: 'r' },
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'checking the build',
+                   radius: 2, views: ['north', 'top'], size: 2 },
     })
-    expect(res.isError).toBe(true)
-    expect(text(res)).toContain('blockAt')
+    expect(shot.isError).toBeFalsy()
+    const content = shot.content as Array<{ type: string; data?: string; mimeType?: string; text?: string }>
+    const images = content.filter((c) => c.type === 'image')
+    expect(images).toHaveLength(2)
+    for (const image of images) {
+      expect(image.mimeType).toBe('image/png')
+      const png = Buffer.from(image.data!, 'base64')
+      expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    }
+    expect(content.find((c) => c.type === 'text')?.text).toContain('north')
+  })
+
+  it('rejects a render box that would take the process down', async () => {
+    await joinAndSpawn()
+    // collectGrid is synchronous on the event loop that keeps the bot's
+    // connection alive: 41^3 cells is the most it may read in one call.
+    const tooBig = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', radius: 21 },
+    })
+    expect(tooBig.isError).toBe(true)
+    expect(text(tooBig)).toContain('less than or equal to 20')
+  })
+
+  it('rejects an oversized pixel size at the schema', async () => {
+    await joinAndSpawn()
+    const tooBig = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'test-world', task_id: 't', reason: 'r', size: 13 },
+    })
+    expect(tooBig.isError).toBe(true)
+    expect(text(tooBig)).toContain('less than or equal to 12')
+  })
+
+  it('says so plainly when there is no bot to look through', async () => {
+    const shot = await client.callTool({
+      name: 'craft_take_screenshot',
+      arguments: { world_name: 'nowhere', task_id: 't', reason: 'r' },
+    })
+    expect(shot.isError).toBe(true)
+    expect(text(shot)).toContain('craft_join_world')
   })
 })

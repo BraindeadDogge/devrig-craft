@@ -1,4 +1,5 @@
 import type { EventEmitter } from 'node:events'
+import type { Vec3 } from 'vec3'
 
 // Structural subset of DiscoveredWorld (src/discovery/snapshot.ts) — kept
 // local so the bot runtime has zero compile-time dependency on the
@@ -13,6 +14,8 @@ export type BotLike = EventEmitter & {
   entity?: { position: { x: number; y: number; z: number } }
   health?: number
   food?: number
+  // Present on a real mineflayer bot; the renderer reads the world through it.
+  blockAt?: (pos: Vec3) => { name?: string } | null
   end: (reason?: string) => void
 }
 
