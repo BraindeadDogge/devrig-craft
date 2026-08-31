@@ -44,8 +44,11 @@ Each character in a row means exactly one of three things:
 Because the whole grammar is three symbols, showing the plan back — before
 touching a single block — should be enough for a human or the model itself to
 catch a mistake by eye. `renderPlan` below does exactly that: it prints every
-layer as an elevation, prints the legend it resolved, and warns about any
-character it cannot resolve or about a ragged grid, before anything is built.
+layer as an elevation, prints the legend it resolved, and warns — before
+anything is built — about each of the four ways a plan can be wrong on paper:
+a character with no legend entry, a ragged grid, a legend value that is not a
+real holdable block, and two layers claiming the same `y` (where only the
+first would ever be read).
 
 ```js
 // A plan is data: a legend from character to block name, and one string grid
@@ -79,6 +82,24 @@ function renderPlan(plan, legend) {
   const depths = new Set(plan.map((l) => l.rows.length))
   if (widths.size > 1 || depths.size > 1)
     print(`WARNING: ragged plan — row lengths ${[...widths].join('/')}, layer depths ${[...depths].join('/')}`)
+  // A legend VALUE has to be a real, holdable block, not just a plausible
+  // name. The build fence opens by stocking one hotbar slot per material
+  // (mcData.itemsByName[mat].id), so a name with no item — wall_torch is the
+  // obvious trap: a real block, no item form — throws a bare TypeError there,
+  // before a single diagnostic has been printed. Catch it in the preview,
+  // where the fix is one character in the legend.
+  const noItem = Object.keys(legend).filter((c) => !mcData.itemsByName[legend[c]])
+  if (noItem.length)
+    print(`WARNING: no such item as ${noItem.map((c) => `${c}=${legend[c]}`).join(', ')} — the build cannot stock it and will throw`)
+  // Two layers at the same y is worse than an error: planAt does
+  // plan.find(l => l.y === dy), so the SECOND layer's rows are unreachable.
+  // renderPlan prints both, build and verify both read only the first, and
+  // verify then says "matches the plan" about a world that does not match
+  // what was written — the two-copies-disagree failure the whole plan-as-data
+  // format exists to remove. It can only be caught here, before the build.
+  const dupes = [...new Set(plan.map((l) => l.y).filter((y, i, ys) => ys.indexOf(y) !== i))]
+  if (dupes.length)
+    print(`WARNING: two layers share y+${dupes.join(', y+')} — only the FIRST is ever read; merge them or the later rows are never built`)
 }
 
 renderPlan(PLAN, LEGEND)

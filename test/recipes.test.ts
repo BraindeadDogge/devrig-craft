@@ -205,6 +205,35 @@ async function runBuildPlanFence(opts: {
   return { dug, noted, tally, putCalls, world, printed }
 }
 
+
+// renderPlan is a pure printer — no bot, no world — so the preview's warnings
+// can be executed rather than grepped for. mcData is stubbed with just the
+// itemsByName lookup the function uses.
+async function runRenderPlan(opts: {
+  legend: Record<string, string>
+  plan: Array<{ y: number; rows: string[] }>
+  items: string[]
+}): Promise<string[]> {
+  const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
+  const fence = fences.find((f) => f.includes('function renderPlan'))
+  expect(fence, 'blueprint.md must carry a fence defining renderPlan').toBeDefined()
+  const at = fence!.indexOf('function renderPlan')
+  const src = fence!.slice(at)
+  const body = src.slice(0, src.indexOf('\n}') + 2)
+  const printed: string[] = []
+  const mcData = { itemsByName: Object.fromEntries(opts.items.map((n, i) => [n, { id: i + 1 }])) }
+  const render = new Function(
+    'print',
+    'mcData',
+    `${body}\nreturn renderPlan`,
+  )((...a: unknown[]) => printed.push(a.map(String).join(' ')), mcData) as (
+    plan: unknown,
+    legend: unknown,
+  ) => void
+  render(opts.plan, opts.legend)
+  return printed
+}
+
 describe('recipe corpus', () => {
   it('ships the 10 articles (M1 + M2 + blueprint)', async () => {
     const paths = (await allArticles()).map((a) => a.path).sort()
@@ -1347,5 +1376,60 @@ describe('recipe corpus', () => {
       Object.keys(tally).join(' '),
       'the engine must say the cell could not be read',
     ).toMatch(/not loaded/)
+  })
+
+  it('renderPlan warns about a legend value that is not a real block', async () => {
+    // The failure without it: the build fence's first act is to stock one
+    // hotbar slot per material via mcData.itemsByName[mat].id, so a legend
+    // value with no item form throws a bare TypeError before any diagnostic
+    // is printed. wall_torch is the trap — a real block, no item — and a
+    // plausible thing for a model to write into a legend. renderPlan is sold
+    // as the step that catches a plan's paper mistakes, so it has to catch
+    // this one, where the fix is one character.
+    const printed = await runRenderPlan({
+      legend: { L: 'oak_log', T: 'wall_torch' },
+      plan: [{ y: 0, rows: ['LT'] }],
+      items: ['oak_log'],
+    })
+    const warnings = printed.filter((l) => l.startsWith('WARNING'))
+    expect(warnings.join(' '), 'the unbuildable legend value must be named').toContain('wall_torch')
+    expect(
+      warnings.join(' '),
+      'and a legend value that IS a real item must not be reported',
+    ).not.toContain('oak_log')
+  })
+
+  it('renderPlan warns when two layers claim the same y', async () => {
+    // planAt does plan.find(l => l.y === dy), so a duplicate y makes the
+    // second layer's rows unreachable: renderPlan prints both, build and
+    // verify read only the first, and verify then reports "matches the plan"
+    // for a world that does not match what the author wrote. That is exactly
+    // the two-copies-disagree failure plan-as-data exists to remove, and the
+    // preview is the only place it can be caught.
+    const printed = await runRenderPlan({
+      legend: { L: 'oak_log' },
+      plan: [
+        { y: 0, rows: ['LL'] },
+        { y: 1, rows: ['LL'] },
+        { y: 1, rows: ['L.'] },
+      ],
+      items: ['oak_log'],
+    })
+    const warnings = printed.filter((l) => l.startsWith('WARNING'))
+    expect(warnings.join(' '), 'the duplicated layer height must be named').toMatch(/y\+1/)
+    expect(
+      warnings.join(' '),
+      'and the reader must be told the later rows are never read',
+    ).toMatch(/first|never/i)
+    // A well-formed plan must stay silent, or the warning is noise.
+    const clean = await runRenderPlan({
+      legend: { L: 'oak_log' },
+      plan: [
+        { y: 0, rows: ['LL'] },
+        { y: 1, rows: ['LL'] },
+      ],
+      items: ['oak_log'],
+    })
+    expect(clean.filter((l) => l.startsWith('WARNING'))).toEqual([])
   })
 })
