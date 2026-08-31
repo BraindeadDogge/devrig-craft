@@ -96,8 +96,9 @@ body of an async function, so top-level `await` is expected.
    disconnected — possibly boxed inside leftovers, or left HOVERING mid-air
    by server-side flight state (a walk test passes while flying, so check
    altitude first: solid ground more than 1 block below feet → `/tp` down).
-   The house recipe's `ensureMobile` does both checks in ~2 seconds. Never
-   spend minutes diagnosing movement while the human watches a statue.
+   The build engine's `ensureMobile` (`mcp-craft://skill/blueprint`) does both
+   checks in ~2 seconds and runs before it places anything. Never spend minutes
+   diagnosing movement while the human watches a statue.
 11. **Look at what you built before you call it done.** When the build stands,
    `craft_take_screenshot` it from all four sides, from above, and as an
    isometric (`views: [..., 'iso']`), and look at them. The isometric is the

@@ -116,6 +116,14 @@ floor under them yet — beside a third wall course, or a roof slope — marked
 "no face from anywhere I can stand" for every cell above its own eye and lays
 nothing above waist height.
 
+Before any of that, the engine tests that it can move at all: a rejoining bot
+spawns where it disconnected, sometimes boxed into leftovers and sometimes left
+HOVERING by server-side flight state, and a hovering bot cannot be routed by
+the pathfinder at all (measured: 21 cancelled goals, nothing placed in 160s).
+`ensureMobile` checks altitude first — a walk test passes while flying — and
+only then nudges forward to prove the feet work. Two seconds, at the top, every
+time.
+
 Survival scaffolding is the engine's to remove, too. `raiseTo` records every
 pillar block it places, and `buildPlan` digs them back out at the end — from
 BESIDE each one, top down. A build with a plank tower inside it is not built.
@@ -310,6 +318,41 @@ async function climbOutOfPit() {
     print('could not climb out — dig steps toward BASE or re-run Step 1 for another lot')
   }
   return out
+}
+
+// --- mobility self-test FIRST (see mcp-craft://skill/humanlike) ---
+// A rejoining bot spawns where it disconnected: possibly boxed inside
+// leftovers, possibly left HOVERING by server-side flight state. A walk test
+// passes while flying, so check altitude first and only then try to move.
+// Two seconds here beats minutes of diagnosing why nothing is being placed
+// while the human watches a statue.
+async function ensureMobile() {
+  const feet0 = bot.entity.position.floored()
+  let drop = 0
+  while (drop < 40) {
+    const below = bot.blockAt(feet0.offset(0, -1 - drop, 0))
+    if (below && below.boundingBox === 'block') break
+    drop++
+  }
+  // y0 is the ground course itself (layer 0 sits ON BASE), so the spot to
+  // STAND on is y0 + 1 — the one line that differs from house.md's copy,
+  // which counted from a first-air-layer y0.
+  const spot = `${BASE.x + 3} ${y0 + 1} ${BASE.z - 2}`
+  if (drop > 1) {
+    bot.chat(`I rejoined floating ${drop} blocks up — coming down to earth.`)
+    bot.chat(`/tp ${bot.username} ${spot}`)
+    await sleep(1500)
+  }
+  const start = bot.entity.position.clone()
+  await bot.lookAt(start.offset(1, 1.62, 0), true)
+  bot.setControlState('forward', true)
+  await sleep(700)
+  bot.setControlState('forward', false)
+  if (bot.entity.position.distanceTo(start) >= 0.3) return true
+  bot.chat('I spawned stuck — teleporting to the lot rather than digging myself out.')
+  bot.chat(`/tp ${bot.username} ${spot}`)
+  await sleep(1500)
+  return bot.entity.position.distanceTo(start) >= 0.3
 }
 
 // --- materials: one hotbar slot per material, plus scaffolding planks (raiseTo
@@ -695,6 +738,8 @@ async function buildPlan() {
 }
 
 print(`starting: ${JSON.stringify(whereAmI())}`)
+if (!(await ensureMobile()))
+  print('WARNING: still immobile after /tp (cheats off?) — dig out per mcp-craft://skill/building-with-commands')
 await climbOutOfPit()
 const result = await buildPlan()
 printJson({ ...result, where: whereAmI() })

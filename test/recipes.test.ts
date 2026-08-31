@@ -166,6 +166,27 @@ describe('recipe corpus', () => {
     }
   })
 
+  it('the build engine tests that it can move before it places anything', async () => {
+    // A rejoining bot spawns where it disconnected — boxed into leftovers, or
+    // left HOVERING by server-side flight state, which the pathfinder cannot
+    // route at all (measured: 21 cancelled goals, 0 blocks in 160s). A walk
+    // test passes while flying, so altitude comes first. This was house.md's
+    // ensureMobile, which the prompt index points at by name; it moved into the
+    // engine with the rest of the prelude.
+    const fence = await engineFence()
+    expect(fence, 'the engine must carry the mobility self-test').toContain(
+      'async function ensureMobile',
+    )
+    const call = fence.indexOf('await ensureMobile()')
+    const build = fence.indexOf('await buildPlan()')
+    expect(call, 'and must actually run it').toBeGreaterThan(-1)
+    expect(build, 'and must run it before the build').toBeGreaterThan(call)
+    const index = await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')
+    expect(index, "the index's rule 10 must point where the helper now lives").toMatch(
+      /ensureMobile[^.]{0,80}mcp-craft:\/\/skill\/blueprint/,
+    )
+  })
+
   it('the build engine reports per-cell outcomes, tool errors and stalled walks', async () => {
     const fence = await engineFence()
     for (const key of ['tally', 'errors', 'stalls']) {
@@ -718,6 +739,7 @@ describe('recipe corpus', () => {
     // engine uses" above.
     const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
     const prelude = [
+      'ensureMobile',
       'land',
       'flyLeg',
       'flyClear',
