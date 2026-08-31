@@ -862,9 +862,9 @@ The diff comes back in the plan's own characters, not a list of coordinates:
 a matching cell reprints its own letter (or `.` for air), a missing block
 becomes `!`, a wrong block becomes `#`, and a cell whose chunk is not loaded
 becomes `~` — unread, which is neither a match nor a defect of the build, and
-never scored as air. Lay that character grid over the
-plan you drew and a mismatch jumps out by eye, the same way `renderPlan`'s
-preview does before anything is built. A character with no legend entry is
+never scored as air. Lay that character grid over the plan you drew and a
+mismatch jumps out by eye, the same way `renderPlan`'s preview does before
+anything is built. A character with no legend entry is
 neither right nor wrong — it is a defect in the plan itself, so it is counted
 and reported on its own rather than folded into the block count.
 
@@ -922,8 +922,7 @@ async function verifyPlan() {
         // before comparing. A torch, carpet, button or pressure plate is a
         // real block with a real name and boundingBox 'empty'; testing
         // boundingBox first reports it as missing forever, no matter how
-        // many times it gets placed. Only a genuinely absent block (an
-        // unloaded chunk) falls back to 'air'.
+        // many times it gets placed.
         // Two normalisations, and they pull in opposite directions. Any of
         // the empty-air names IS the air a '.' cell asks for, so cave_air
         // must not print '#' for a cell the builder rightly calls clear. But
