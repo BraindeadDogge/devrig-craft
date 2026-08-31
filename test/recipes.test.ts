@@ -627,4 +627,29 @@ describe('recipe corpus', () => {
     expect([...widths], 'ragged row lengths in the example').toHaveLength(1)
     expect([...depths], 'layers of differing depth in the example').toHaveLength(1)
   })
+
+  it('buildPlan drives everything from the plan, not from predicates', async () => {
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    expect(fences).toContain('async function buildPlan')
+    // the engine must not carry the old house-shaped predicates
+    for (const dead of ['isRing', 'isCorner', 'isWindow', 'wantAt'])
+      expect(fences, `${dead} is house-specific; the engine reads the plan`).not.toContain(dead)
+  })
+
+  it('the engine keeps the movement lessons the house recipe paid for', async () => {
+    // Each of these exists because a live run failed without it. Losing one in
+    // the rewrite would re-open a defect that took a day to find.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    for (const helper of ['standBeside', 'stepAside', 'chooseFaces', 'flyClear', 'raiseTo'])
+      expect(fences, `${helper} must survive into the engine`).toContain(`function ${helper}`)
+    expect(fences, 'the sight test must check the ray entry face').toContain('intersect')
+    expect(fences, 'flight must not use the teleporting flyTo').not.toContain('bot.creative.flyTo(')
+  })
+
+  it('the engine will not dig a cell its own plan wants filled', async () => {
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    expect(fences, 'the stuck-walk watchdog needs a plan-driven guard').toMatch(
+      /partOfTheBuild|partOfThePlan/,
+    )
+  })
 })
