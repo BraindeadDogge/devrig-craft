@@ -79,9 +79,13 @@ body of an async function, so top-level `await` is expected.
    whose shape lives in its control flow cannot be shown to the human, varied
    on request, or diffed against the world afterwards. So: write a `LEGEND` and
    a `PLAN` (`mcp-craft://skill/blueprint`; `mcp-craft://skill/house` has a
-   worked one for a house), show it with `renderPlan`, build it with
-   `buildPlan`, then `verifyPlan`. Copy those fences; do not rewrite them.
-   Send the first script within seconds of joining; adapt afterwards.
+   worked one for a house), show it with `renderPlan`, and look at what it
+   prints. If the printed shape is not the building you meant, fix the
+   plan — not the blocks: a plan you catch by eye costs seconds, a plan you
+   discover was wrong after building costs a walk back and a cleanup. Once it
+   reads right, build it with `buildPlan`, then `verifyPlan` against that same
+   plan. Copy those fences; do not rewrite them. Send the first script within
+   seconds of joining; adapt afterwards.
 8. **Movement that hangs:** never `bot.creative.flyTo`, never a `goto` while
    flying — both freeze forever on LAN worlds. Walk (`stopFlying()` first),
    and race every `goto` with a `sleep` watchdog, then `setGoal(null)`.

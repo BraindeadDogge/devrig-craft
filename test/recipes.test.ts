@@ -1051,4 +1051,42 @@ describe('recipe corpus', () => {
       'planAt has drifted between the build and verify fences',
     ).toBe(extractDecl(build, 'planAt'))
   })
+
+  it('the index tells the model to author and show a plan before building', async () => {
+    const flat = (await readFile(`${RECIPES}/prompt/skill.md`, 'utf8')).replace(/\s+/g, ' ')
+    expect(flat, 'the model writes the plan itself').toMatch(/write .{0,60}plan|author .{0,60}plan/i)
+    expect(flat, 'and shows it before placing anything').toMatch(/renderPlan|before .{0,40}(build|place)/i)
+  })
+
+  it('the engine text is identical wherever it appears', async () => {
+    // The sandbox has no imports, so the engine is pasted rather than called.
+    // Pasted code drifts — that is exactly how seesFace ended up looser than
+    // the runtime's own check. Two other tests already pin specific copies:
+    // "the movement prelude exists in exactly one fence" guards blueprint.md
+    // against growing a SECOND internal copy of its own helpers, and
+    // "humanlike's sight test is the same code the engine uses" pins
+    // humanlike.md's one deliberate copy of seesFace. Neither of those
+    // catches a copy landing in some OTHER article — building.md,
+    // world-queries.md, a future one — and going stale there. This test is
+    // the general form: wherever a copy of a named helper turns up outside
+    // blueprint.md, it must read byte-identical to blueprint's canonical
+    // text. house.md carries neither helper any more (Task 4 turned it into
+    // a design guide), so it is exercised here only as "found nowhere,
+    // nothing to compare" — the guard still holds if that ever changes back.
+    const canonical = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    const body = (src: string, name: string): string | null => {
+      const at = src.indexOf(name)
+      if (at < 0) return null
+      const rest = src.slice(at)
+      return rest.slice(0, rest.indexOf('\n}') + 2)
+    }
+    for (const { path, text } of await allArticles()) {
+      if (path === 'skill/blueprint.md') continue
+      for (const name of ['function seesFace', 'async function standBeside']) {
+        const found = body(text, name)
+        if (found) expect(found, `${name} has drifted in ${path}`).toBe(body(canonical, name))
+      }
+    }
+  })
+
 })
