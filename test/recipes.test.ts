@@ -566,6 +566,34 @@ describe('recipe corpus', () => {
       expect(fences.join('\n'), `${dead} was the old hardcoded shape`).not.toContain(dead)
   })
 
+  it('house.md never advises shrinking the PLAN the watchdog reads', async () => {
+    // buildPlan and partOfTheBuild both read the GLOBAL PLAN. Splitting the
+    // build into "layers 0-3 now, 4-6 next" leaves the finished walls outside
+    // the plan on the second call, and the stuck-walk watchdog is then free to
+    // tunnel out through them: measured live, three pathfinder timeouts during
+    // the roof phase cost 22 wall blocks. Advice can reintroduce a regression
+    // just as effectively as code, so pin the advice.
+    const house = await readFile(`${RECIPES}/skill/house.md`, 'utf8')
+    expect(house, 'a shrunk PLAN unguards everything it leaves out').not.toContain('PLAN.slice')
+    expect(
+      house.replace(/\s+/g, ' '),
+      'and the article must say why the whole plan stays in every call',
+    ).toMatch(/partOfTheBuild/)
+  })
+
+  it('house.md warns that the front eave lands on the second pass', async () => {
+    // buildPlan sweeps each layer by row, z ascending, so at y+4 the whole z=0
+    // row is reached before z=1 exists — an overhanging cell with no neighbour
+    // yet has no face to click, and all seven bump "no face". It self-heals on
+    // the documented re-run, but a reader who was not told will spend the run
+    // debugging it. The old script built eaves last on purpose; a plan states
+    // shape, not order, so that ordering knowledge has to survive as prose.
+    const flat = (await readFile(`${RECIPES}/skill/house.md`, 'utf8')).replace(/\s+/g, ' ')
+    expect(flat, 'the article must warn which row cannot land on the first pass').toMatch(
+      /eave[^.]{0,200}second pass/i,
+    )
+  })
+
   it('house.md keeps the design knowledge a plan cannot carry', async () => {
     const flat = (await readFile(`${RECIPES}/skill/house.md`, 'utf8')).replace(/\s+/g, ' ')
     expect(flat, 'where the door goes').toMatch(/door/i)

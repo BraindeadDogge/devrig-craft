@@ -92,7 +92,7 @@ pane, `D` door; `.` is a cell that must be **empty**, and a space is a cell
 the plan does not speak for — see `mcp-craft://skill/blueprint` for the
 grammar, and vary this freely once you can read it.
 
-Two things in the grid are worth understanding before you copy it:
+Three things in the grid are worth understanding before you copy it:
 
 - **The interior is `.`, so the engine keeps the room hollow** — anything
   standing in there is cleared, not skipped.
@@ -102,6 +102,15 @@ Two things in the grid are worth understanding before you copy it:
   verify step would report the bed you just placed as a defect and the build
   loop would try to dig it out again, forever. A space is how a plan says
   "not mine".
+- **The front eave row lands on the second pass, not the first.** `buildPlan`
+  sweeps each layer row by row with `z` ascending, so at `y+4` the whole `z=0`
+  row is reached before `z=1` exists — and an overhanging block whose only
+  possible neighbour has not been placed yet has no face to click. Expect seven
+  `no face` bumps there on the first run; the next run finds `z=1` in place and
+  hangs the eave off its side. (The back eave at `z=7` is fine: `z=6` comes
+  first.) The old script built the eaves last for exactly this reason. A plan
+  states shape, not order, so that ordering knowledge cannot live in the grid —
+  it lives here, and it costs one extra pass.
 
 ```js
 // The oak starter house as data. Paste this at the TOP of each engine fence
@@ -278,10 +287,20 @@ than filling a cell of its own.
 **About one second per placed block**, and this plan places roughly 200 of
 them: the runtime paces clicks to 2–3 per second with human jitter, and walking
 between columns costs more than the clicks do. So a single call will not finish
-the house. Split it by layers — build `PLAN.slice(0, 4)` (ground course through
-the top wall course) in one call and `PLAN.slice(4)` (deck, roof, ridge) in the
-next, each with `timeout: 420` — or hand the engine the whole plan twice and
-let the second run fill in what the first ran out of time for.
+the house — and it does not have to. Send the same fence again, whole, with
+`timeout: 420`: every cell that is already right reports `already right` and
+costs nothing, so each run resumes where the last one was killed. Two or three
+calls build the house, and the last one places almost nothing.
+
+**Do not split the work by cutting the plan down.** Handing the engine the
+lower layers first and the roof second looks like the obvious economy, and it
+reintroduces the worst failure this recipe ever had. `partOfTheBuild` — the
+guard that stops the stuck-walk watchdog digging its way out through your own
+build — reads the same global `PLAN` the builder does. Leave the walls out of
+that plan and the walls stop being the build's: measured live, three pathfinder
+timeouts during the roof phase cost 22 wall blocks, the bot tunnelling out
+through its own house. The full plan stays in every call; the *engine* is what
+decides how much of it it gets through before the timeout.
 
 If the verify diff shows misses, fix exactly those cells rather than rebuilding
 a phase: `buildPlan` will re-place only what is wrong on the next run.
