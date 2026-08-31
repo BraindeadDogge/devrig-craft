@@ -112,9 +112,9 @@ below, it reads `BASE`, `PLAN` and `LEGEND` from the top-level script around
 it rather than taking them as parameters — the same globals `put` and `walkTo`
 already read. (`renderPlan(plan, legend)` is the exception, and can afford to
 be: it touches no world and reads no site, so a plan and a legend are all it
-needs.) Paste the fence with your own site's
-`BASE`/`PLAN`/`LEGEND` declared under those exact names, or the engine
-silently builds (or, below, verifies) someone else's plan. It walks every
+needs.) Paste the fence with your own site's `BASE`/`PLAN`/`LEGEND` declared
+under those exact names, or the engine silently builds (or, below, verifies)
+someone else's plan. It walks every
 layer bottom-up — so a new block always has a neighbour beneath it to click —
 and for each cell asks the plan what belongs there. Nothing about the shape
 is hardcoded, so the same driver builds any `LEGEND`/`PLAN` you hand it.
