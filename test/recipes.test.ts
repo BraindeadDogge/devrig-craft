@@ -767,4 +767,126 @@ describe('recipe corpus', () => {
       'unknown-legend and not-mine must be distinguishable',
     ).not.toBe(planAt(plan, legend, 1, 0, 1))
   })
+
+  it('verifyPlan reads the same plan the builder read', async () => {
+    // The whole point: the shape is stated once. If verify carried its own copy
+    // of the design, the two could disagree — which is the defect this replaces.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    expect(fences).toContain('async function verifyPlan')
+    expect(fences, 'verify must go through the same planAt as the builder').toMatch(
+      /verifyPlan[\s\S]{0,1200}planAt\(/,
+    )
+  })
+
+  it("verifyPlan reports the diff in the plan's own characters", async () => {
+    // A diff you can lay over the plan you wrote is readable; a list of
+    // coordinates is not.
+    const blueprint = await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')
+    const flat = blueprint.replace(/\s+/g, ' ')
+    expect(flat).toMatch(/same characters|plan's own characters|character grid/i)
+  })
+
+  it('only the verify step may announce that a build is finished', async () => {
+    // A "done" that never read the world back is how a floor of holes gets
+    // reported as a floor.
+    const blueprint = await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')
+    for (const [i, fence] of jsFences(blueprint).entries()) {
+      const claim = /bot\.chat\([^\n]*(is done|finished|all built|complete)/i
+      if (!fence.includes('verifyPlan')) {
+        expect(claim.test(fence), `blueprint fence #${i} claims completion without verifying`).toBe(
+          false,
+        )
+      }
+    }
+  })
+
+  it('verifyPlan reads BASE/PLAN/LEGEND as globals, matching buildPlan\'s convention', async () => {
+    // Task 2 pinned buildPlan()/partOfTheBuild(p) to reading globals rather
+    // than taking parameters, because put/walkTo are copied byte-identical
+    // from house.md's global-reading versions. verifyPlan must follow the
+    // same convention, or the two engines disagree about how a plan is passed.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8')).join('\n')
+    expect(fences, 'verifyPlan must take no arguments').toMatch(/async function verifyPlan\(\s*\)/)
+  })
+
+  it('verifyPlan renders the diff in the plan\'s own characters and separates a plan defect from a wrong block', async () => {
+    // The text assertions above are not wrong, just insufficient: this actually
+    // runs verifyPlan's diff logic against a small synthetic world, the same
+    // way the planAt test above executes a pure function extracted from the
+    // fence instead of only grepping for it.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
+    const verifyFence = fences.find((f) => f.includes('async function verifyPlan'))!
+    const start = verifyFence.indexOf('const planAt = ')
+    const invocationStart = verifyFence.indexOf('const verdict = await verifyPlan()')
+    expect(start, 'verify fence must define planAt').toBeGreaterThan(-1)
+    expect(invocationStart, 'verify fence must call verifyPlan()').toBeGreaterThan(-1)
+    // Slice out just planAt + verifyPlan, dropping the fence's own hardcoded
+    // BASE/PLAN/LEGEND literals so the test can supply its own via closure
+    // parameters instead (a `const` of the same name in the same scope as a
+    // parameter would be a SyntaxError).
+    const engineSrc = verifyFence.slice(start, invocationStart)
+
+    const printed: string[] = []
+    const chats: string[] = []
+    const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
+      '0,0,0': { name: 'oak_log', boundingBox: 'block' }, // matches L
+      // 2,0,0 deliberately absent: the plan wants 'stone' there — missing
+      '3,0,0': { name: 'dirt', boundingBox: 'block' }, // the plan wants air here — wrong
+    }
+    const bot = {
+      blockAt: (p: { x: number; y: number; z: number }) =>
+        worldBlocks[`${p.x},${p.y},${p.z}`] ?? null,
+      chat: (m: string) => chats.push(m),
+    }
+    const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
+    const LEGEND = { L: 'oak_log', M: 'stone' } // 'X' below has no entry — a plan defect
+    const PLAN = [{ y: 0, rows: ['LXM.'] }]
+
+    const run = new Function(
+      'bot',
+      'print',
+      'printJson',
+      'BASE',
+      'PLAN',
+      'LEGEND',
+      `${engineSrc}\nreturn verifyPlan()`,
+    ) as (
+      bot: unknown,
+      print: (...a: unknown[]) => void,
+      printJson: (v: unknown) => void,
+      BASE: unknown,
+      PLAN: unknown,
+      LEGEND: unknown,
+    ) => Promise<{
+      ok: number
+      total: number
+      wrong: Array<{ at: number[]; want: string; got: string }>
+      planDefects: Array<{ at: number[]; ch: string }>
+    }>
+
+    const result = await run(
+      bot,
+      (...a: unknown[]) => printed.push(a.map(String).join(' ')),
+      () => {},
+      BASE,
+      PLAN,
+      LEGEND,
+    )
+
+    expect(result.total, 'the unresolved legend character must not be scored').toBe(3)
+    expect(result.ok, 'exactly the matching cell must count as ok').toBe(1)
+    expect(result.wrong, 'the missing block and the extra block are both wrong').toHaveLength(2)
+    expect(result.planDefects, 'the unresolved character is a plan defect, not a wrong block').toHaveLength(
+      1,
+    )
+    expect(result.planDefects[0]!.ch).toBe('X')
+    // The diff line lays the plan's own characters over the outcome: the
+    // matching cell keeps its letter, the unresolved character becomes '?',
+    // the missing block becomes '!', and the extra block becomes '#'.
+    expect(printed.some((line) => line.includes('L?!#')), `diff line not found in:\n${printed.join('\n')}`).toBe(
+      true,
+    )
+    expect(chats, 'an unfinished build must say so, only from verifyPlan').toHaveLength(1)
+    expect(chats[0]).toMatch(/not finished/i)
+  })
 })

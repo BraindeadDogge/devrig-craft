@@ -74,10 +74,15 @@ renderPlan(PLAN, LEGEND)
 
 ## Building it
 
-`buildPlan(BASE, plan, legend)` is the one driver. It walks every layer
-bottom-up — so a new block always has a neighbour beneath it to click — and
-for each cell asks the plan what belongs there. Nothing about the shape is
-hardcoded, so the same driver builds any `LEGEND`/`PLAN` you hand it.
+`buildPlan()` is the one driver, and it takes no arguments: like the rest of
+this article's engine, it reads `BASE`, `PLAN` and `LEGEND` from the
+top-level script around it rather than taking them as parameters — the same
+globals `put` and `walkTo` already read. Paste the fence with your own site's
+`BASE`/`PLAN`/`LEGEND` declared under those exact names, or the engine
+silently builds (or, below, verifies) someone else's plan. It walks every
+layer bottom-up — so a new block always has a neighbour beneath it to click —
+and for each cell asks the plan what belongs there. Nothing about the shape
+is hardcoded, so the same driver builds any `LEGEND`/`PLAN` you hand it.
 
 None of the movement and placement code below is new: it is `house.md`'s
 Step 2a prelude, already proven against a live world and pinned
@@ -645,7 +650,10 @@ async function buildPlan() {
         await put(dx, layer.y, dz, want)
       }
     }
-    print(`layer y+${layer.y} done — ${placed} placed so far`)
+    // "done" would be a claim this loop never checked — it only placed and
+    // dug, it never read anything back. Say what actually happened; leave
+    // the finished/not-finished verdict to verifyPlan, which does look.
+    print(`layer y+${layer.y} swept — ${placed} placed so far`)
   }
   return { placed, tally, errors, stalls }
 }
@@ -654,4 +662,97 @@ print(`starting: ${JSON.stringify(whereAmI())}`)
 await climbOutOfPit()
 const result = await buildPlan()
 printJson({ ...result, where: whereAmI() })
+```
+
+## Verifying it
+
+A build claim nobody checked is a guess wearing a report. `verifyPlan()` is
+the one step allowed to say the build is finished, and only because it is the
+one step that actually looks: it walks the same `PLAN`, resolves each cell
+through the same `planAt` the builder used, and asks `bot.blockAt` what is
+really there. Like `buildPlan`, it takes no arguments — it reads `BASE`,
+`PLAN` and `LEGEND` from the script around it, so run it with your own site's
+values declared under those same names.
+
+The diff comes back in the plan's own characters, not a list of coordinates:
+a matching cell reprints its own letter (or `.` for air), a missing block
+becomes `!`, and a wrong block becomes `#`. Lay that character grid over the
+plan you drew and a mismatch jumps out by eye, the same way `renderPlan`'s
+preview does before anything is built. A character with no legend entry is
+neither right nor wrong — it is a defect in the plan itself, so it is counted
+and reported on its own rather than folded into the block count.
+
+```js
+const LEGEND = { L: 'oak_log', P: 'oak_planks', o: 'glass_pane', C: 'cobblestone', D: 'oak_door' }
+const PLAN = [
+  { y: 0, rows: ['LCCCCCL', 'CPPPPPC', 'CPPPPPC', 'LCCCCCL'] },
+  { y: 1, rows: ['LPPDPPL', 'o.....o', 'P.....P', 'LPPPPPL'] },
+]
+const BASE = new Vec3(100, -61, 100) // ← the same site you built at
+
+// Same planAt as the builder — copied, not re-derived, so build and verify
+// can never disagree about what a character means.
+const planAt = (plan, legend, dx, dy, dz) => {
+  const layer = plan.find((l) => l.y === dy)
+  const ch = layer?.rows[dz]?.[dx]
+  if (ch === undefined || ch === ' ') return undefined // not mine
+  if (ch === '.') return 'air'
+  const mat = legend[ch]
+  return mat === undefined ? null : mat // null: legend has no entry for this character
+}
+
+// Read the world back and lay it over the plan. ! marks a missing block, #
+// a wrong one; a character with no legend entry is a plan defect, reported
+// separately so it is never silently scored as a match or a miss.
+async function verifyPlan() {
+  const nameToChar = {}
+  for (const [ch, name] of Object.entries(LEGEND)) if (!(name in nameToChar)) nameToChar[name] = ch
+  let ok = 0, total = 0
+  const wrong = []
+  const planDefects = []
+  for (const layer of [...PLAN].sort((a, b) => a.y - b.y)) {
+    const lines = []
+    for (const [dz, row] of layer.rows.entries()) {
+      let line = ''
+      for (let dx = 0; dx < row.length; dx++) {
+        const want = planAt(PLAN, LEGEND, dx, layer.y, dz)
+        if (want === undefined) { line += ' '; continue } // not mine — say nothing
+        if (want === null) {
+          // A plan defect, not a world defect: nothing to compare the world
+          // against. Reported on its own — folding it into "wrong" would
+          // blame the build for a mistake that lives in the plan.
+          planDefects.push({ at: [dx, layer.y, dz], ch: row[dx] })
+          line += '?'
+          continue
+        }
+        const block = bot.blockAt(BASE.offset(dx, layer.y, dz))
+        const got = block && block.boundingBox === 'block' ? block.name : 'air'
+        total++
+        if (got === want) { ok++; line += want === 'air' ? '.' : (nameToChar[want] ?? '?') }
+        else {
+          wrong.push({ at: [dx, layer.y, dz], want, got })
+          line += got === 'air' ? '!' : '#' // ! = missing, # = something else
+        }
+      }
+      lines.push(`z=${String(dz).padStart(2)} ${line}`)
+    }
+    print(`--- y+${layer.y} ---\n${lines.join('\n')}`)
+  }
+  print(`${ok}/${total} cells match the plan. ! = nothing there, # = wrong block.`)
+  if (planDefects.length)
+    print(`${planDefects.length} cell(s) use a character with no legend entry — a plan defect, not scored above.`)
+  if (wrong.length) printJson({ wrong: wrong.slice(0, 40), moreNotShown: Math.max(0, wrong.length - 40) })
+  const finished = wrong.length === 0 && planDefects.length === 0
+  // Only this step may say the build is finished, and only because it is the
+  // step that read the world back to check — buildPlan never looked.
+  bot.chat(
+    finished
+      ? 'Verified: the build matches the plan.'
+      : `Verified: ${wrong.length} cell(s) wrong, ${planDefects.length} plan defect(s) — not finished.`,
+  )
+  return { ok, wrong, total, planDefects }
+}
+
+const verdict = await verifyPlan()
+printJson(verdict)
 ```
