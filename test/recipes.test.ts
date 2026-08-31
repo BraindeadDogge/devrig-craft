@@ -74,6 +74,131 @@ async function engineFence(): Promise<string> {
   return build!
 }
 
+// Extracts planAt/digAt/buildPlan out of blueprint.md's build fence and runs
+// them against a synthetic world. The sandbox has no imports, so the article
+// itself is the only copy of this code — executing it is the only way to test
+// its branch logic at all. What this harness does NOT prove: standBeside is
+// stubbed as unconditionally true, so sight and reachability are assumed away.
+// Whether a real zero-collision-shape occupant (a torch, tall grass) can be
+// SEEN and dug by the live runtime is a different question a synthetic world
+// cannot answer — the runtime's dig gate ray-casts against the same empty
+// collision shape seesBlockCentre would, finds nothing to hit from any angle,
+// and refuses bot.dig. That is what `digFails` below models.
+async function runBuildPlanFence(opts: {
+  world: Record<string, { name: string; boundingBox: string }>
+  PLAN: Array<{ y: number; rows: string[] }>
+  LEGEND: Record<string, string>
+  digFails?: (name: string) => boolean
+  unloaded?: string[]
+}): Promise<{
+  dug: string[]
+  noted: string[]
+  tally: Record<string, number>
+  putCalls: Array<{ dx: number; dy: number; dz: number; mat: string }>
+  world: Record<string, { name: string; boundingBox: string }>
+  printed: string[]
+}> {
+  const buildFence = await engineFence()
+  const bodyOf = (name: string): string => {
+    const at = buildFence.indexOf(name)
+    expect(at, `${name} not found in the build fence`).toBeGreaterThan(-1)
+    const rest = buildFence.slice(at)
+    return rest.slice(0, rest.indexOf('\n}') + 2)
+  }
+  const engineSrc = [
+    bodyOf('const planAt = '),
+    bodyOf('async function digAt'),
+    bodyOf('async function buildPlan'),
+  ].join('\n')
+
+  const world = opts.world
+  const unloaded = new Set(opts.unloaded ?? [])
+  const digFails = opts.digFails ?? (() => false)
+  // A loaded cell with nothing in it is an air BLOCK, not a null: mineflayer
+  // returns null only for a chunk it has not received. Modelling "empty" as
+  // null would test a world that cannot happen.
+  const AIR = { name: 'air', boundingBox: 'empty' }
+  const dug: string[] = []
+  const noted: string[] = []
+  const bot = {
+    blockAt: (p: { x: number; y: number; z: number }) => {
+      const key = `${p.x},${p.y},${p.z}`
+      if (unloaded.has(key)) return null
+      return world[key] ?? AIR
+    },
+    dig: async (b: { name: string }) => {
+      dug.push(b.name)
+      // A refused dig REJECTS — the fence catches it with note() — and leaves
+      // the block standing. That second half is what the engine reads back.
+      if (digFails(b.name)) throw new Error(`refused: no line of sight to ${b.name}`)
+      const key = Object.keys(world).find((k) => world[k]!.name === b.name)
+      if (key) delete world[key]
+    },
+  }
+  const tally: Record<string, number> = {}
+  const bump = (r: string) => {
+    tally[r] = (tally[r] ?? 0) + 1
+    return r
+  }
+  const note = (e: unknown) => {
+    noted.push(String((e as { message?: string })?.message ?? e))
+  }
+  const standBeside = async () => true // always able to stand beside, for this test
+  const sleep = async () => {}
+  const printed: string[] = []
+  const print = (...a: unknown[]) => printed.push(a.map(String).join(' '))
+  const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
+  const pillars: unknown[] = []
+  const partOfTheBuild = () => false
+  const placed = 0
+  const errors: Record<string, number> = {}
+  const stalls = 0
+  const putCalls: Array<{ dx: number; dy: number; dz: number; mat: string }> = []
+  const put = async (dx: number, dy: number, dz: number, mat: string) => {
+    putCalls.push({ dx, dy, dz, mat })
+  }
+
+  const run = new Function(
+    'bot',
+    'standBeside',
+    'bump',
+    'note',
+    'sleep',
+    'print',
+    'BASE',
+    'PLAN',
+    'LEGEND',
+    'pillars',
+    'partOfTheBuild',
+    'placed',
+    'tally',
+    'errors',
+    'stalls',
+    'put',
+    `${engineSrc}\nreturn buildPlan()`,
+  ) as (...args: unknown[]) => Promise<unknown>
+
+  await run(
+    bot,
+    standBeside,
+    bump,
+    note,
+    sleep,
+    print,
+    BASE,
+    opts.PLAN,
+    opts.LEGEND,
+    pillars,
+    partOfTheBuild,
+    placed,
+    tally,
+    errors,
+    stalls,
+    put,
+  )
+  return { dug, noted, tally, putCalls, world, printed }
+}
+
 describe('recipe corpus', () => {
   it('ships the 10 articles (M1 + M2 + blueprint)', async () => {
     const paths = (await allArticles()).map((a) => a.path).sort()
@@ -1096,141 +1221,33 @@ describe('recipe corpus', () => {
     // plate or tall grass sitting in a '.' cell was reported "already clear"
     // and never touched — while verifyPlan (which judges by name, not by
     // boundingBox) correctly kept reporting the same cell wrong. That was an
-    // endless "fix it" loop with no way out. Extract planAt/digAt/buildPlan
-    // from the article and run them against a synthetic world, the same way
-    // verifyPlan is exercised elsewhere in this file.
+    // endless "fix it" loop with no way out.
     //
-    // What this test does NOT prove: standBeside is stubbed below as
-    // unconditionally true, so this exercises the branch logic — "is this
-    // treated as occupied, and does the code attempt to clear it" — with
-    // sight and reachability assumed away. Whether a real, zero-collision-
-    // shape occupant like an actual torch can be SEEN and dug by the live
-    // runtime is a different question this synthetic harness cannot answer:
-    // the runtime's own dig gate ray-casts against the same empty collision
-    // shape standBeside's seesBlockCentre would ray-cast against, and for a
-    // torch/button/tall-grass/etc. that ray-cast finds nothing to hit from
-    // any angle, so bot.dig is refused in the live world regardless of what
-    // this test shows. See the '.' cell exception documented where the
-    // format defines '.', and the comment on digAt itself.
-    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
-    const buildFence = fences.find((f) => f.includes('async function buildPlan'))!
-    const bodyOf = (name: string): string => {
-      const at = buildFence.indexOf(name)
-      expect(at, `${name} not found in the build fence`).toBeGreaterThan(-1)
-      const rest = buildFence.slice(at)
-      return rest.slice(0, rest.indexOf('\n}') + 2)
-    }
-    const planAtSrc = bodyOf('const planAt = ')
-    const digAtSrc = bodyOf('async function digAt')
-    const buildPlanSrc = bodyOf('async function buildPlan')
-
     // x=0: a wrong SOLID block sits where the plan wants empty (must still
     // be cleared — this is the case that already worked).
     // x=1: a non-solid occupant (a torch) sits where the plan wants empty —
     // the regression case for the bug.
-    // x=2: genuinely empty already (absent from the world) — must not be
-    // "dug" at all.
+    // x=2: genuinely empty already — must not be "dug" at all.
     // x=3: a MATERIAL cell (wants cobblestone) holds a different, non-solid
     // occupant (a wall_torch) — the symmetric hole in the material branch,
     // which used to gate on boundingBox === 'block' and so never attempted
     // to clear a non-solid wrong-occupant before placing.
-    const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
-      '0,0,0': { name: 'stone', boundingBox: 'block' },
-      '1,0,0': { name: 'torch', boundingBox: 'empty' },
-      '3,0,0': { name: 'wall_torch', boundingBox: 'empty' },
-    }
-    const dug: string[] = []
-    const bot = {
-      blockAt: (p: { x: number; y: number; z: number }) => worldBlocks[`${p.x},${p.y},${p.z}`] ?? null,
-      dig: async (b: { name: string }) => {
-        dug.push(b.name)
-        const key = Object.keys(worldBlocks).find((k) => worldBlocks[k]!.name === b.name)
-        if (key) delete worldBlocks[key]
+    const { dug, tally, putCalls, world } = await runBuildPlanFence({
+      world: {
+        '0,0,0': { name: 'stone', boundingBox: 'block' },
+        '1,0,0': { name: 'torch', boundingBox: 'empty' },
+        '3,0,0': { name: 'wall_torch', boundingBox: 'empty' },
       },
-    }
-    const tally: Record<string, number> = {}
-    const bump = (r: string) => {
-      tally[r] = (tally[r] ?? 0) + 1
-      return r
-    }
-    const note = () => {}
-    const standBeside = async () => true // always able to stand beside, for this test
-    const sleep = async () => {}
-    const printed: string[] = []
-    const print = (...a: unknown[]) => printed.push(a.map(String).join(' '))
-    const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
-    const LEGEND = { M: 'cobblestone' } // '.' never consults the legend; M is the material cell
-    const PLAN = [{ y: 0, rows: ['...M'] }]
-    const pillars: unknown[] = []
-    const partOfTheBuild = () => false
-    const placed = 0
-
-    const errors: Record<string, number> = {}
-    const stalls = 0
-    const putCalls: Array<{ dx: number; dy: number; dz: number; mat: string }> = []
-    const put = async (dx: number, dy: number, dz: number, mat: string) => {
-      putCalls.push({ dx, dy, dz, mat })
-    }
-    const run = new Function(
-      'bot',
-      'standBeside',
-      'bump',
-      'note',
-      'sleep',
-      'print',
-      'BASE',
-      'PLAN',
-      'LEGEND',
-      'pillars',
-      'partOfTheBuild',
-      'placed',
-      'tally',
-      'errors',
-      'stalls',
-      'put',
-      `${planAtSrc}\n${digAtSrc}\n${buildPlanSrc}\nreturn buildPlan()`,
-    ) as (
-      bot: unknown,
-      standBeside: unknown,
-      bump: unknown,
-      note: unknown,
-      sleep: unknown,
-      print: unknown,
-      BASE: unknown,
-      PLAN: unknown,
-      LEGEND: unknown,
-      pillars: unknown,
-      partOfTheBuild: unknown,
-      placed: unknown,
-      tally: unknown,
-      errors: unknown,
-      stalls: unknown,
-      put: unknown,
-    ) => Promise<{ placed: number; tally: Record<string, number> }>
-
-    await run(
-      bot,
-      standBeside,
-      bump,
-      note,
-      sleep,
-      print,
-      BASE,
-      PLAN,
-      LEGEND,
-      pillars,
-      partOfTheBuild,
-      placed,
-      tally,
-      errors,
-      stalls,
-      put,
-    )
+      LEGEND: { M: 'cobblestone' }, // '.' never consults the legend
+      PLAN: [{ y: 0, rows: ['...M'] }],
+    })
 
     expect(dug, 'the wrong solid block must still be cleared').toContain('stone')
     expect(dug, 'a non-solid occupant of a "." cell must be cleared too').toContain('torch')
-    expect(worldBlocks['2,0,0'], 'genuine air must never be "dug"').toBeUndefined()
-    expect(tally['already clear'] ?? 0, 'the genuinely empty cell counts as already clear').toBe(1)
+    expect(world['2,0,0'], 'genuine air must never be "dug"').toBeUndefined()
+    expect(tally['already clear'] ?? 0, 'the genuinely empty cell counts as already clear').toBe(
+      1,
+    )
     expect(
       dug,
       'a non-solid WRONG occupant of a material cell must be cleared too, not silently skipped to put()',
@@ -1240,4 +1257,40 @@ describe('recipe corpus', () => {
       'the material cell must still get its real material placed after the wrong occupant is cleared',
     ).toContainEqual({ dx: 3, dy: 0, dz: 0, mat: 'cobblestone' })
   })
+
+  it('a material cell whose occupant cannot be dug is still placed into', async () => {
+    // The regression this test exists for: the material branch used to
+    // `continue` when digAt failed, so a cell it could not clear was never
+    // placed at all. Everything the engine cannot dig is a zero-collision-
+    // shape block — short_grass, tall_grass, snow — and every one of those is
+    // REPLACEABLE: put() places straight into it and Minecraft removes it.
+    // So on an ordinary grassy lot (which house.md's lot picker accepts on
+    // purpose) the whole y+1 wall course, sitting exactly where the grass
+    // grows, was silently lost. Reporting the failed clear is right; skipping
+    // the placement is not.
+    //
+    // The old dig mock always succeeded, which is why no scoped review caught
+    // this: the `continue` had zero coverage. digFails models the runtime's
+    // refusal instead.
+    const { dug, noted, tally, putCalls } = await runBuildPlanFence({
+      world: { '0,0,0': { name: 'short_grass', boundingBox: 'empty' } },
+      LEGEND: { M: 'oak_planks' },
+      PLAN: [{ y: 0, rows: ['M'] }],
+      digFails: () => true,
+    })
+
+    expect(dug, 'the engine must still attempt the clear').toContain('short_grass')
+    expect(noted.join(' '), 'and keep the runtime refusal rather than swallowing it').toMatch(
+      /refused/,
+    )
+    expect(
+      tally['could not clear a wrong block before replacing it'] ?? 0,
+      'the failed clear must be reported, not hidden',
+    ).toBe(1)
+    expect(
+      putCalls,
+      'and the cell must still be placed — a replaceable occupant is not a reason to skip it',
+    ).toContainEqual({ dx: 0, dy: 0, dz: 0, mat: 'oak_planks' })
+  })
+
 })

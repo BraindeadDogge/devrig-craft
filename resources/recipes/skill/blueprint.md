@@ -744,7 +744,18 @@ async function buildPlan() {
           // if the leftover happens to BE solid. Judging by name at least
           // makes this an attempted, reported dig instead of a silent
           // mismatch that build and verify would disagree about.
-          if (!(await digAt(at))) { bump('could not clear a wrong block before replacing it'); continue }
+          // Report the failure and CARRY ON to put(): a cell that could not
+          // be cleared must never be skipped. Everything digAt cannot clear
+          // is a zero-collision-shape block, and every one of those —
+          // short_grass, tall_grass, snow, water — is REPLACEABLE: put()
+          // places straight into it and the server removes it. Skipping
+          // instead lost the entire y+1 wall course on an ordinary grassy lot
+          // (house.md's lot picker accepts one on purpose, and that is
+          // exactly the course the grass grows in). Falling through is safe
+          // because put() has its own guard: it refuses to place into a
+          // block with boundingBox 'block', so a genuinely solid obstruction
+          // still cannot be built over.
+          if (!(await digAt(at))) bump('could not clear a wrong block before replacing it')
         }
         await put(dx, layer.y, dz, want)
       }
