@@ -105,7 +105,13 @@ async function runBuildPlanFence(opts: {
     const rest = buildFence.slice(at)
     return rest.slice(0, rest.indexOf('\n}') + 2)
   }
+  // The engine's own set of names that mean "nothing is here", taken from the
+  // article rather than restated, so a test can never bless a set the recipe
+  // does not ship.
+  const emptySrc = /^const EMPTY = new Set\(\[[^\]]*\]\)$/m.exec(buildFence)
+  expect(emptySrc, 'the build fence must declare the names that mean empty').not.toBeNull()
   const engineSrc = [
+    emptySrc![0],
     bodyOf('const planAt = '),
     bodyOf('async function digAt'),
     bodyOf('async function buildPlan'),
@@ -1007,9 +1013,9 @@ describe('recipe corpus', () => {
     // fence instead of only grepping for it.
     const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
     const verifyFence = fences.find((f) => f.includes('async function verifyPlan'))!
-    const start = verifyFence.indexOf('const planAt = ')
+    const start = verifyFence.indexOf('const EMPTY = ')
     const invocationStart = verifyFence.indexOf('const verdict = await verifyPlan()')
-    expect(start, 'verify fence must define planAt').toBeGreaterThan(-1)
+    expect(start, 'verify fence must define EMPTY and planAt').toBeGreaterThan(-1)
     expect(invocationStart, 'verify fence must call verifyPlan()').toBeGreaterThan(-1)
     // Slice out just planAt + verifyPlan, dropping the fence's own hardcoded
     // BASE/PLAN/LEGEND literals so the test can supply its own via closure
@@ -1032,23 +1038,33 @@ describe('recipe corpus', () => {
     //       "missing" forever, no matter how many times it was placed.
     //   5 ' ' not mine           — world holds a solid block there too, but
     //       a space must never be reported on at all
-    //   6 '.' matches empty      — plan wants air, world is genuinely empty
+    //   6 '.' matches empty      — plan wants air, world holds cave_air: a
+    //       real block name that MEANS empty, so it must score as a match
+    //   7 '.' unread              — bot.blockAt returns null, i.e. the chunk
+    //       is not loaded. Not a match and not a build defect: "I could not
+    //       look" must never be scored as the air the plan asked for.
     const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
       '0,0,0': { name: 'oak_log', boundingBox: 'block' },
       // 2,0,0 deliberately absent: the plan wants 'stone' there — missing
       '3,0,0': { name: 'granite', boundingBox: 'block' },
       '4,0,0': { name: 'torch', boundingBox: 'empty' },
       '5,0,0': { name: 'diamond_block', boundingBox: 'block' }, // must be ignored
-      // 6,0,0 deliberately absent: genuinely empty, matches the air the plan wants
+      '6,0,0': { name: 'cave_air', boundingBox: 'empty' }, // empty, by another name
     }
+    // A loaded cell with nothing in it is an air BLOCK; mineflayer returns null
+    // only for a chunk it has not received. Column 7 is that chunk.
+    const unread = new Set(['7,0,0'])
     const bot = {
-      blockAt: (p: { x: number; y: number; z: number }) =>
-        worldBlocks[`${p.x},${p.y},${p.z}`] ?? null,
+      blockAt: (p: { x: number; y: number; z: number }) => {
+        const key = `${p.x},${p.y},${p.z}`
+        if (unread.has(key)) return null
+        return worldBlocks[key] ?? { name: 'air', boundingBox: 'empty' }
+      },
       chat: (m: string) => chats.push(m),
     }
     const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
     const LEGEND = { L: 'oak_log', S: 'stone' } // 'X' below has no entry — a plan defect
-    const PLAN = [{ y: 0, rows: ['LXSS. .'] }]
+    const PLAN = [{ y: 0, rows: ['LXSS. ..'] }]
 
     const run = new Function(
       'bot',
@@ -1081,13 +1097,13 @@ describe('recipe corpus', () => {
       LEGEND,
     )
 
-    // 7 columns; 'X' (defect) and ' ' (not mine) are excluded from total.
-    expect(result.total, 'the unresolved character and the space must not be scored').toBe(5)
-    expect(result.ok, 'the two matching cells (a real block and real air) count as ok').toBe(2)
+    // 8 columns; 'X' (defect) and ' ' (not mine) are excluded from total.
+    expect(result.total, 'the unresolved character and the space must not be scored').toBe(6)
+    expect(result.ok, 'the two matching cells (a real block and cave_air) count as ok').toBe(2)
     expect(
       result.wrong,
-      'missing, wrong-solid, and wrong-non-solid cells are all wrong — three of them',
-    ).toHaveLength(3)
+      'missing, wrong-solid, wrong-non-solid and unread cells are all wrong — four of them',
+    ).toHaveLength(4)
     expect(
       result.planDefects,
       'the unresolved character is a plan defect, not a wrong block',
@@ -1110,19 +1126,26 @@ describe('recipe corpus', () => {
     // solid the block sitting there — it is not the plan's to judge.
     expect(result.wrong.some((w) => w.at[0] === 5)).toBe(false)
     expect(result.planDefects.some((d) => d.at[0] === 5)).toBe(false)
+    // An unloaded chunk is reported as unread, not as the air the plan wanted:
+    // a verdict of "matches the plan" must never come out of a cell nobody
+    // could read.
+    expect(
+      result.wrong.some((w) => w.at[0] === 7 && w.want === 'air' && w.got === 'unread'),
+      'a null from bot.blockAt must be reported as unread, never scored as air',
+    ).toBe(true)
     // The diff line lays the plan's own characters over the outcome: a
     // matching cell keeps its letter (or '.' for matching air), the
     // unresolved character becomes '?', a missing block becomes '!', a wrong
     // block (solid or not) becomes '#', and a space stays blank.
     expect(
-      printed.some((line) => line.includes('L?!## .')),
+      printed.some((line) => line.includes('L?!## .~')),
       `diff line not found in:\n${printed.join('\n')}`,
     ).toBe(true)
     expect(chats, 'an unfinished build must say so, only from verifyPlan').toHaveLength(1)
     expect(chats[0]).toMatch(/not finished/i)
   })
 
-  it("blueprint's build and verify fences state LEGEND, PLAN, BASE and planAt identically", async () => {
+  it("blueprint's build and verify fences state LEGEND, PLAN, BASE, EMPTY and planAt identically", async () => {
     // The article's whole thesis is that build and verify cannot disagree
     // about the shape — but each fence is a self-contained script (pasted
     // into craft_execute_code on its own), so each carries its OWN copy of
@@ -1148,6 +1171,10 @@ describe('recipe corpus', () => {
     const legendRe = /^const LEGEND = \{.*\}$/m
     const planRe = /^const PLAN = \[[\s\S]*?^\]$/m
     const baseRe = /^const BASE = new Vec3\([^)]*\)/m
+    // EMPTY decides what "this cell is empty" means, for the builder's
+    // 'already clear' and for verify's '.'-matches-air. Two fences disagreeing
+    // about it is the same builder-versus-verify split as a drifted planAt.
+    const emptyRe = /^const EMPTY = new Set\(\[[^\]]*\]\)$/m
 
     expect(
       extractMatch(verify, legendRe, 'LEGEND'),
@@ -1161,6 +1188,10 @@ describe('recipe corpus', () => {
       extractMatch(verify, baseRe, 'BASE'),
       'BASE has drifted between the build and verify fences',
     ).toBe(extractMatch(build, baseRe, 'BASE'))
+    expect(
+      extractMatch(verify, emptyRe, 'EMPTY'),
+      'EMPTY has drifted between the build and verify fences',
+    ).toBe(extractMatch(build, emptyRe, 'EMPTY'))
 
     const extractDecl = (fence: string, name: string): string => {
       const re = new RegExp(`const ${name} = `)
@@ -1232,22 +1263,28 @@ describe('recipe corpus', () => {
     // occupant (a wall_torch) — the symmetric hole in the material branch,
     // which used to gate on boundingBox === 'block' and so never attempted
     // to clear a non-solid wrong-occupant before placing.
+    // x=4: a '.' cell holding cave_air — a real block NAME whose meaning is
+    // "nothing is here". Testing for the single name 'air' made it an
+    // occupant the engine then reported it could not clear, on every pass.
     const { dug, tally, putCalls, world } = await runBuildPlanFence({
       world: {
         '0,0,0': { name: 'stone', boundingBox: 'block' },
         '1,0,0': { name: 'torch', boundingBox: 'empty' },
         '3,0,0': { name: 'wall_torch', boundingBox: 'empty' },
+        '4,0,0': { name: 'cave_air', boundingBox: 'empty' },
       },
       LEGEND: { M: 'cobblestone' }, // '.' never consults the legend
-      PLAN: [{ y: 0, rows: ['...M'] }],
+      PLAN: [{ y: 0, rows: ['...M.'] }],
     })
 
     expect(dug, 'the wrong solid block must still be cleared').toContain('stone')
     expect(dug, 'a non-solid occupant of a "." cell must be cleared too').toContain('torch')
     expect(world['2,0,0'], 'genuine air must never be "dug"').toBeUndefined()
-    expect(tally['already clear'] ?? 0, 'the genuinely empty cell counts as already clear').toBe(
-      1,
-    )
+    expect(dug, 'cave_air is another name for nothing, not an occupant').not.toContain('cave_air')
+    expect(
+      tally['already clear'] ?? 0,
+      'the empty cell and the cave_air cell both count as already clear',
+    ).toBe(2)
     expect(
       dug,
       'a non-solid WRONG occupant of a material cell must be cleared too, not silently skipped to put()',
@@ -1293,4 +1330,22 @@ describe('recipe corpus', () => {
     ).toContainEqual({ dx: 0, dy: 0, dz: 0, mat: 'oak_planks' })
   })
 
+  it('a cell in an unloaded chunk is reported as unread, never as clear', async () => {
+    // bot.blockAt returns null for a chunk the client has not received. A
+    // loaded empty cell is an air BLOCK, so null means "I could not look",
+    // not "nothing is there" — scoring it as air let the build call a cell it
+    // never read "already clear".
+    const { dug, tally } = await runBuildPlanFence({
+      world: {},
+      LEGEND: {},
+      PLAN: [{ y: 0, rows: ['.'] }],
+      unloaded: ['0,0,0'],
+    })
+    expect(dug, 'there is nothing to dig in a chunk you do not have').toEqual([])
+    expect(tally['already clear'] ?? 0, 'an unread cell is not a clear cell').toBe(0)
+    expect(
+      Object.keys(tally).join(' '),
+      'the engine must say the cell could not be read',
+    ).toMatch(/not loaded/)
+  })
 })

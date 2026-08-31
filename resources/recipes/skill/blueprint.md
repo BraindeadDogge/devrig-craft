@@ -25,7 +25,7 @@ Each character in a row means exactly one of three things:
   finds a block occupying it, that is a defect to clear, not a cell to skip.
   **Exception:** a block with no collision shape at all — `torch`,
   `wall_torch`, `short_grass`, `tall_grass`, `*_button`, `*_pressure_plate`,
-  `snow`, signs, vines, most flowers — cannot actually be cleared by the
+  `snow`, `water`, signs, vines, most flowers — cannot actually be cleared by the
   engine. The runtime's dig gate ray-casts against the same empty collision
   shape the engine would ray-cast against to stand beside it, so there is no
   angle from which the block is "seen" and `bot.dig` is refused before the
@@ -154,6 +154,21 @@ const BASE = new Vec3(100, -61, 100) // ← your own site; keep LEGEND/PLAN abov
 // now; do not reintroduce the call. (Measured live: 208 failed pillars.)
 const y0 = BASE.y // layer 0 of the plan sits ON base — no +1, unlike house.md
 const W = PLAN[0].rows[0].length, D = PLAN[0].rows.length // for diagnostics only
+// 'air' is not the only name for nothing. In the bundled 1.21.4 data `cave_air`
+// (what the generator leaves inside caves and under every overhang) and
+// `void_air` (outside the built world) are distinct block NAMES with the same
+// empty shape, so a test for the single name 'air' calls them occupants: a '.'
+// cell holding cave_air reported "could not clear" on every pass while
+// verifyPlan printed '#' for it — the builder-cannot-fix-what-verify-reports
+// loop, reopened by name. One set, used at every site that asks "is this cell
+// empty?", in both this fence and the verify fence.
+//
+// `water` is deliberately NOT in it. Water is a real, named block that fills
+// the cell; calling it empty would let verifyPlan announce "matches the plan"
+// over a flooded room. It does not need to be in here to be built through,
+// either — water is replaceable, so a material cell holding it falls through
+// to put() and the placement lands.
+const EMPTY = new Set(['air', 'cave_air', 'void_air'])
 
 // --- diagnostics: keep what the runtime tells you instead of discarding it ---
 const tally = {} // per-cell outcome counts: placed / occupied / out of reach / …
@@ -673,7 +688,8 @@ async function standBeside(pos) {
 // "nothing to dig" — the same blind spot verifyPlan (which judges by name)
 // does not have, so it kept reporting the cell wrong forever. Judging by
 // name at least makes this function ATTEMPT the dig instead of lying that
-// it is already clear. It does not make the dig succeed: most of these
+// it is already clear — against EMPTY, so the other names for nothing are
+// not mistaken for occupants. It does not make the dig succeed: most of these
 // blocks have no collision shape, the runtime's own dig gate ray-casts
 // against that same empty shape, and standBeside below can find no angle
 // that "sees" the block — so bot.dig is refused and digAt correctly
@@ -681,11 +697,14 @@ async function standBeside(pos) {
 // above), rather than either lying or hanging.
 async function digAt(pos) {
   const b = bot.blockAt(pos)
-  if (!b || b.name === 'air') return true
+  // A null is an unloaded chunk, not an empty cell — there is no block object
+  // to hand bot.dig either way, so there is nothing this function can do but
+  // report the cell as needing no dig. buildPlan says which of the two it was.
+  if (!b || EMPTY.has(b.name)) return true
   if (!(await standBeside(pos))) { bump('nowhere to stand beside the cell I must dig'); return false }
   await Promise.race([bot.dig(bot.blockAt(pos)).catch(note), sleep(4000)])
   const after = bot.blockAt(pos)
-  return !after || after.name === 'air'
+  return !after || EMPTY.has(after.name)
 }
 
 // --- the engine itself: read the plan, ask it what belongs at each cell ---
@@ -726,12 +745,17 @@ async function buildPlan() {
           // cannot tell "nothing here" from "a torch/carpet/button/pressure
           // plate here", since both read 'empty'. Testing boundingBox first
           // used to leave exactly that kind of occupant standing forever.
-          if (!there || there.name === 'air') { bump('already clear'); continue }
+          // A null is not air: bot.blockAt returns null for a chunk the
+          // client has not received, and a LOADED empty cell is an air block,
+          // never a null. So null means "I could not look", not "nothing is
+          // there" — scoring it as clear reports a cell that was never read.
+          if (!there) { bump('cell not loaded — cannot tell whether it is clear'); continue }
+          if (EMPTY.has(there.name)) { bump('already clear'); continue }
           if (!(await digAt(at))) bump('could not clear a cell the plan wants empty')
           continue
         }
         if (there?.name === want) { bump('already right'); continue }
-        if (there && there.name !== 'air') {
+        if (there && !EMPTY.has(there.name)) {
           // The cell holds something other than what the plan wants —
           // solid or not — so clear it before placing, generalising
           // house.md's replaceGround (house.md:647) to the plan. Judging by
@@ -808,7 +832,9 @@ values declared under those same names.
 
 The diff comes back in the plan's own characters, not a list of coordinates:
 a matching cell reprints its own letter (or `.` for air), a missing block
-becomes `!`, and a wrong block becomes `#`. Lay that character grid over the
+becomes `!`, a wrong block becomes `#`, and a cell whose chunk is not loaded
+becomes `~` — unread, which is neither a match nor a defect of the build, and
+never scored as air. Lay that character grid over the
 plan you drew and a mismatch jumps out by eye, the same way `renderPlan`'s
 preview does before anything is built. A character with no legend entry is
 neither right nor wrong — it is a defect in the plan itself, so it is counted
@@ -822,6 +848,11 @@ const PLAN = [
 ]
 const BASE = new Vec3(100, -61, 100) // ← the same site you built at
 
+// The same set of names for nothing the builder uses, and the same planAt —
+// copied, not re-derived, so build and verify can never disagree about what a
+// character or an empty cell means. (`water` is out of it on purpose: see the
+// build fence.)
+const EMPTY = new Set(['air', 'cave_air', 'void_air'])
 // Same planAt as the builder — copied, not re-derived, so build and verify
 // can never disagree about what a character means.
 const planAt = (plan, legend, dx, dy, dz) => {
@@ -865,19 +896,27 @@ async function verifyPlan() {
         // boundingBox first reports it as missing forever, no matter how
         // many times it gets placed. Only a genuinely absent block (an
         // unloaded chunk) falls back to 'air'.
-        const got = block ? block.name : 'air'
+        // Two normalisations, and they pull in opposite directions. Any of
+        // the empty-air names IS the air a '.' cell asks for, so cave_air
+        // must not print '#' for a cell the builder rightly calls clear. But
+        // a null is NOT air: bot.blockAt returns null only for a chunk the
+        // client has not received, and a loaded empty cell is an air block —
+        // so null is "I could not look", and scoring it as air would let
+        // "matches the plan" come out of a world nobody read.
+        const got = block ? (EMPTY.has(block.name) ? 'air' : block.name) : 'unread'
         total++
         if (got === want) { ok++; line += want === 'air' ? '.' : (nameToChar[want] ?? '?') }
         else {
           wrong.push({ at: [dx, layer.y, dz], want, got })
-          line += got === 'air' ? '!' : '#' // ! = missing, # = something else
+          // ! = missing, # = something else, ~ = chunk not loaded
+          line += got === 'unread' ? '~' : got === 'air' ? '!' : '#'
         }
       }
       lines.push(`z=${String(dz).padStart(2)} ${line}`)
     }
     print(`--- y+${layer.y} ---\n${lines.join('\n')}`)
   }
-  print(`${ok}/${total} cells match the plan. ! = nothing there, # = wrong block.`)
+  print(`${ok}/${total} cells match the plan. ! = nothing there, # = wrong block, ~ = chunk not loaded.`)
   if (planDefects.length)
     print(`${planDefects.length} cell(s) use a character with no legend entry — a plan defect, not scored above.`)
   if (wrong.length) printJson({ wrong: wrong.slice(0, 40), moreNotShown: Math.max(0, wrong.length - 40) })
