@@ -40,8 +40,12 @@ them by accident.
   The eave is what casts the shadow line under it.
 - **An interior a player would actually sleep in.** Bed against the back wall,
   chest and crafting table along the side wall by the front, and **wall
-  torches at head height, never torches spammed on the floor**. Two more on
-  the front wall either side of the door, so the entrance is lit from outside.
+  torches on the top wall course (`y+3`), never torches spammed on the
+  floor**. That is the course the grid leaves blank for them — `y+2` is the
+  window course and its inner cells are `.`, so a torch hung there is a cell
+  the plan wants empty: `verifyPlan` reports it wrong and `buildPlan` keeps
+  trying to dig it out and cannot. Two more on the front wall either side of
+  the door, so the entrance is lit from outside.
 
 ## Step 1 — pick the lot (and clean it like a person would)
 
@@ -271,7 +275,7 @@ than filling a cell of its own.
 - **Chest and crafting table** go in the work corner — plan cells `x+5` at
   `z+4` and `z+5`, on the floor. Those are ordinary placements: stand in the
   room, click the floor's top face.
-- **Wall torches, at head height, on the inside faces.** Click the wall block
+- **Wall torches, on the top wall course, on the inside faces.** Click the wall block
   at plan y+3 with the face pointing INTO the room, and the torch hangs on the
   wall the way a person's would: over the bed, over the work corner, and one
   beside the door. Torches dropped on the floor are the single clearest tell

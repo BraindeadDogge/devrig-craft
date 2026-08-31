@@ -107,20 +107,23 @@ renderPlan(PLAN, LEGEND)
 
 ## Building it
 
-`buildPlan()` is the one driver, and it takes no arguments: like the rest of
-this article's engine, it reads `BASE`, `PLAN` and `LEGEND` from the
-top-level script around it rather than taking them as parameters — the same
-globals `put` and `walkTo` already read. Paste the fence with your own site's
+`buildPlan()` is the one driver, and it takes no arguments: like `verifyPlan`
+below, it reads `BASE`, `PLAN` and `LEGEND` from the top-level script around
+it rather than taking them as parameters — the same globals `put` and `walkTo`
+already read. (`renderPlan(plan, legend)` is the exception, and can afford to
+be: it touches no world and reads no site, so a plan and a legend are all it
+needs.) Paste the fence with your own site's
 `BASE`/`PLAN`/`LEGEND` declared under those exact names, or the engine
 silently builds (or, below, verifies) someone else's plan. It walks every
 layer bottom-up — so a new block always has a neighbour beneath it to click —
 and for each cell asks the plan what belongs there. Nothing about the shape
 is hardcoded, so the same driver builds any `LEGEND`/`PLAN` you hand it.
 
-None of the movement and placement code below is new: it is `house.md`'s
-Step 2a prelude, already proven against a live world and pinned
-byte-identical between Step 2a and Step 2b. Only two pieces changed, because
-they used to read the house's own fixed predicates:
+None of the movement and placement code below is new: it was `house.md`'s
+Step 2a prelude, proven against a live world there and pinned byte-identical
+between its two build fences, and it moved here whole when `house.md` became a
+design guide. Only two pieces changed, because they used to read the house's
+own fixed predicates:
 
 - **`partOfTheBuild`** replaces `partOfTheHouse`. The stuck-walk watchdog
   digs whatever pins the bot, and it cannot tell a hillside from the wall it
@@ -173,7 +176,7 @@ const BASE = new Vec3(100, -61, 100) // ← your own site; keep LEGEND/PLAN abov
 // without having flown sets gravity to null — the bot then never lands,
 // onGround stays false, and every jump does nothing. The runtime guards this
 // now; do not reintroduce the call. (Measured live: 208 failed pillars.)
-const y0 = BASE.y // layer 0 of the plan sits ON base — no +1, unlike house.md
+const y0 = BASE.y // layer 0 of the plan sits ON base: BASE.y itself, no +1
 const W = PLAN[0].rows[0].length, D = PLAN[0].rows.length // for diagnostics only
 // 'air' is not the only name for nothing. In the bundled 1.21.4 data `cave_air`
 // (what the generator leaves inside caves and under every overhang) and
@@ -387,8 +390,8 @@ async function ensureMobile() {
     drop++
   }
   // y0 is the ground course itself (layer 0 sits ON BASE), so the spot to
-  // STAND on is y0 + 1 — the one line that differs from house.md's copy,
-  // which counted from a first-air-layer y0.
+  // STAND on is y0 + 1 — the same +1 climbOutOfPit above uses, and the reason
+  // neither of them may pass a bare y0 to the pathfinder.
   const spot = `${BASE.x + 3} ${y0 + 1} ${BASE.z - 2}`
   if (drop > 1) {
     bot.chat(`I rejoined floating ${drop} blocks up — coming down to earth.`)
@@ -783,7 +786,7 @@ async function buildPlan() {
         if (there && !EMPTY.has(there.name)) {
           // The cell holds something other than what the plan wants —
           // solid or not — so clear it before placing, generalising
-          // house.md's replaceGround (house.md:647) to the plan. Judging by
+          // house.md's old replaceGround to the plan. Judging by
           // name here, the same test the '.' branch above and verifyPlan
           // both use, matters for exactly the same reason: a wrong SOLID
           // block is not the only way a material cell can be occupied by
