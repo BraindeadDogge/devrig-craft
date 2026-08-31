@@ -726,7 +726,14 @@ async function verifyPlan() {
           continue
         }
         const block = bot.blockAt(BASE.offset(dx, layer.y, dz))
-        const got = block && block.boundingBox === 'block' ? block.name : 'air'
+        // Name-check first, like buildPlan does (there?.name === want,
+        // blueprint.md:644) — do NOT collapse every non-solid block to 'air'
+        // before comparing. A torch, carpet, button or pressure plate is a
+        // real block with a real name and boundingBox 'empty'; testing
+        // boundingBox first reports it as missing forever, no matter how
+        // many times it gets placed. Only a genuinely absent block (an
+        // unloaded chunk) falls back to 'air'.
+        const got = block ? block.name : 'air'
         total++
         if (got === want) { ok++; line += want === 'air' ? '.' : (nameToChar[want] ?? '?') }
         else {

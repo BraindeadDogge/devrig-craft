@@ -828,10 +828,27 @@ describe('recipe corpus', () => {
 
     const printed: string[] = []
     const chats: string[] = []
+    // Column meaning, left to right ('LXSS. .'):
+    //   0 'L' matches            — world holds oak_log, plan wants oak_log
+    //   1 'X' plan defect        — no LEGEND entry at all
+    //   2 'S' missing            — plan wants stone, world holds nothing
+    //   3 'S' wrong solid        — plan wants stone, world holds granite
+    //       (a DIFFERENT solid block — the case the old '#' assertion never
+    //       exercised, since it only covered an air-wanted cell)
+    //   4 '.' wrong non-solid    — plan wants air, world holds a torch. This
+    //       is the regression case for the bug: collapsing every non-block
+    //       occupant to 'air' before comparing reported a placed torch as
+    //       "missing" forever, no matter how many times it was placed.
+    //   5 ' ' not mine           — world holds a solid block there too, but
+    //       a space must never be reported on at all
+    //   6 '.' matches empty      — plan wants air, world is genuinely empty
     const worldBlocks: Record<string, { name: string; boundingBox: string }> = {
-      '0,0,0': { name: 'oak_log', boundingBox: 'block' }, // matches L
+      '0,0,0': { name: 'oak_log', boundingBox: 'block' },
       // 2,0,0 deliberately absent: the plan wants 'stone' there — missing
-      '3,0,0': { name: 'dirt', boundingBox: 'block' }, // the plan wants air here — wrong
+      '3,0,0': { name: 'granite', boundingBox: 'block' },
+      '4,0,0': { name: 'torch', boundingBox: 'empty' },
+      '5,0,0': { name: 'diamond_block', boundingBox: 'block' }, // must be ignored
+      // 6,0,0 deliberately absent: genuinely empty, matches the air the plan wants
     }
     const bot = {
       blockAt: (p: { x: number; y: number; z: number }) =>
@@ -839,8 +856,8 @@ describe('recipe corpus', () => {
       chat: (m: string) => chats.push(m),
     }
     const BASE = { offset: (dx: number, dy: number, dz: number) => ({ x: dx, y: dy, z: dz }) }
-    const LEGEND = { L: 'oak_log', M: 'stone' } // 'X' below has no entry — a plan defect
-    const PLAN = [{ y: 0, rows: ['LXM.'] }]
+    const LEGEND = { L: 'oak_log', S: 'stone' } // 'X' below has no entry — a plan defect
+    const PLAN = [{ y: 0, rows: ['LXSS. .'] }]
 
     const run = new Function(
       'bot',
@@ -873,20 +890,99 @@ describe('recipe corpus', () => {
       LEGEND,
     )
 
-    expect(result.total, 'the unresolved legend character must not be scored').toBe(3)
-    expect(result.ok, 'exactly the matching cell must count as ok').toBe(1)
-    expect(result.wrong, 'the missing block and the extra block are both wrong').toHaveLength(2)
-    expect(result.planDefects, 'the unresolved character is a plan defect, not a wrong block').toHaveLength(
-      1,
-    )
+    // 7 columns; 'X' (defect) and ' ' (not mine) are excluded from total.
+    expect(result.total, 'the unresolved character and the space must not be scored').toBe(5)
+    expect(result.ok, 'the two matching cells (a real block and real air) count as ok').toBe(2)
+    expect(
+      result.wrong,
+      'missing, wrong-solid, and wrong-non-solid cells are all wrong — three of them',
+    ).toHaveLength(3)
+    expect(
+      result.planDefects,
+      'the unresolved character is a plan defect, not a wrong block',
+    ).toHaveLength(1)
     expect(result.planDefects[0]!.ch).toBe('X')
-    // The diff line lays the plan's own characters over the outcome: the
-    // matching cell keeps its letter, the unresolved character becomes '?',
-    // the missing block becomes '!', and the extra block becomes '#'.
-    expect(printed.some((line) => line.includes('L?!#')), `diff line not found in:\n${printed.join('\n')}`).toBe(
-      true,
-    )
+    // The cell where the plan wants stone but the world holds granite — a
+    // DIFFERENT solid block, not an absence — must show up as wrong.
+    expect(
+      result.wrong.some((w) => w.want === 'stone' && w.got === 'granite'),
+      'a different solid block must report as wrong, not as missing',
+    ).toBe(true)
+    // The cell where the plan wants air but the world holds a torch: a
+    // non-solid block is still a real, named block. Collapsing it to 'air'
+    // before comparing (the bug) would make this cell report as a match.
+    expect(
+      result.wrong.some((w) => w.want === 'air' && w.got === 'torch'),
+      'a placed torch must report as wrong, not silently collapse to a match on "air"',
+    ).toBe(true)
+    // The space column must never appear in wrong or planDefects, however
+    // solid the block sitting there — it is not the plan's to judge.
+    expect(result.wrong.some((w) => w.at[0] === 5)).toBe(false)
+    expect(result.planDefects.some((d) => d.at[0] === 5)).toBe(false)
+    // The diff line lays the plan's own characters over the outcome: a
+    // matching cell keeps its letter (or '.' for matching air), the
+    // unresolved character becomes '?', a missing block becomes '!', a wrong
+    // block (solid or not) becomes '#', and a space stays blank.
+    expect(
+      printed.some((line) => line.includes('L?!## .')),
+      `diff line not found in:\n${printed.join('\n')}`,
+    ).toBe(true)
     expect(chats, 'an unfinished build must say so, only from verifyPlan').toHaveLength(1)
     expect(chats[0]).toMatch(/not finished/i)
+  })
+
+  it("blueprint's build and verify fences state LEGEND, PLAN, BASE and planAt identically", async () => {
+    // The article's whole thesis is that build and verify cannot disagree
+    // about the shape — but each fence is a self-contained script (pasted
+    // into craft_execute_code on its own), so each carries its OWN copy of
+    // LEGEND, PLAN, BASE and planAt. Nothing stops an edit to one copy from
+    // silently diverging from the other; pin them here the same way
+    // 'the engine keeps the house helpers byte-identical...' above pins the
+    // movement prelude between house.md and blueprint.md.
+    const fences = jsFences(await readFile(`${RECIPES}/skill/blueprint.md`, 'utf8'))
+    const build = fences[1]!
+    const verify = fences[2]!
+    expect(verify, 'the verify fence must define verifyPlan').toContain('async function verifyPlan')
+
+    const extractMatch = (fence: string, re: RegExp, label: string): string => {
+      const m = re.exec(fence)
+      expect(m, `${label} not found`).not.toBeNull()
+      return m![0]
+    }
+    // LEGEND and PLAN are compared whole (same regexes the worked-example
+    // tests above use). BASE's value must match, but its trailing comment is
+    // allowed to differ between the two fences (one says "your own site", the
+    // other "the same site you built at") — that prose difference is not a
+    // drift in the shape.
+    const legendRe = /^const LEGEND = \{.*\}$/m
+    const planRe = /^const PLAN = \[[\s\S]*?^\]$/m
+    const baseRe = /^const BASE = new Vec3\([^)]*\)/m
+
+    expect(
+      extractMatch(verify, legendRe, 'LEGEND'),
+      'LEGEND has drifted between the build and verify fences',
+    ).toBe(extractMatch(build, legendRe, 'LEGEND'))
+    expect(
+      extractMatch(verify, planRe, 'PLAN'),
+      'PLAN has drifted between the build and verify fences',
+    ).toBe(extractMatch(build, planRe, 'PLAN'))
+    expect(
+      extractMatch(verify, baseRe, 'BASE'),
+      'BASE has drifted between the build and verify fences',
+    ).toBe(extractMatch(build, baseRe, 'BASE'))
+
+    const extractDecl = (fence: string, name: string): string => {
+      const re = new RegExp(`const ${name} = `)
+      const m = re.exec(fence)
+      expect(m, `${name} not found`).not.toBeNull()
+      const rest = fence.slice(m!.index)
+      const end = rest.indexOf('\n}')
+      expect(end, `${name} must be a complete declaration`).toBeGreaterThan(-1)
+      return rest.slice(0, end + 2)
+    }
+    expect(
+      extractDecl(verify, 'planAt'),
+      'planAt has drifted between the build and verify fences',
+    ).toBe(extractDecl(build, 'planAt'))
   })
 })
