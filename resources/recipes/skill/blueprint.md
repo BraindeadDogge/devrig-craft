@@ -104,6 +104,22 @@ before shoving through them — survives unchanged, because none of it was
 ever house-specific. It was always "how a person places or clears a block
 they can actually see and reach."
 
+One lesson had to change shape rather than move. A face above your eye cannot
+be clicked from the floor, however close you stand: the only reference face is
+the top of the block below it, and from underneath the ray never reaches it.
+`house.md` fixed that by standing at the **height of the course** it was
+laying, arithmetic only a fixed shape can do (`standDyFor(dy) = dy - 1`).
+A plan has no courses to count, so the engine reaches the same place from the
+placement path instead: `standWhereVisible` keeps stand-spots that have no
+floor under them yet — beside a third wall course, or a roof slope — marked
+`airborne`, and `raiseTo` flies or pillars up to them. Without it a run reports
+"no face from anywhere I can stand" for every cell above its own eye and lays
+nothing above waist height.
+
+Survival scaffolding is the engine's to remove, too. `raiseTo` records every
+pillar block it places, and `buildPlan` digs them back out at the end — from
+BESIDE each one, top down. A build with a plank tower inside it is not built.
+
 ```js
 const LEGEND = { L: 'oak_log', P: 'oak_planks', o: 'glass_pane', C: 'cobblestone', D: 'oak_door' }
 const PLAN = [
@@ -654,6 +670,26 @@ async function buildPlan() {
     // dug, it never read anything back. Say what actually happened; leave
     // the finished/not-finished verdict to verifyPlan, which does look.
     print(`layer y+${layer.y} swept — ${placed} placed so far`)
+  }
+  // pillars are scaffolding too — a build with a plank tower standing inside it
+  // is not built. Take them TOP DOWN and from BESIDE each block: walking onto
+  // the pillar to mine it (the obvious move, and what house.md's roof phase
+  // used to do) puts you on top of the very block you are aiming at, and the
+  // contract refuses every one of them — "no line of sight ... 1.1 away".
+  // Measured live: the whole cleanup failed that way and left thirteen planks
+  // standing indoors. In creative there is nothing to do here at all, because
+  // raiseTo flew instead of towering.
+  if (pillars.length) bot.chat('Taking the scaffolding back out.')
+  for (const p of pillars.slice().sort((a, b) => b.y - a.y)) {
+    const b = bot.blockAt(p)
+    if (!b || b.boundingBox !== 'block') continue
+    // A pillar that happens to stand where the plan wants a block is not
+    // scaffolding any more — it is the build. Digging it would punch exactly
+    // the hole verifyPlan then reports, so leave it and say so.
+    if (partOfTheBuild(p)) { bump('scaffolding cell belongs to the plan — left standing'); continue }
+    if (!(await standBeside(p))) { bump('nowhere to stand beside the scaffolding'); continue }
+    await Promise.race([bot.dig(bot.blockAt(p)).catch(note), sleep(4000)])
+    if (bot.blockAt(p)?.boundingBox === 'block') bump('scaffolding would not come out')
   }
   return { placed, tally, errors, stalls }
 }
